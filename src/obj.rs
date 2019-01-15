@@ -12,9 +12,7 @@ type ContextValue = str;
 struct Thread {
     id: ThreadId,
     ip: CommandId,
-    
-    // why do we need to lock it?
-    locked_by: Optional<u128>,
+    ctx: ContextId,
 }
 
 enum ThreadState {
@@ -48,20 +46,20 @@ enum CommandArgument {
     // value
     Const(ContextValue),
     // name of the ctx variable that has the value
-    ContextRef(ContextIdent),
+    Ref(ContextIdent),
 }
 
 enum InterpolatedCommandArgument {
     Const(ContextValue),
-    ContextRef(ContextIdent, ContextValue),
+    Ref(ContextIdent, ContextValue),
 }
 
 impl Command for Command {
     fn interpolate(self, ctx: Context) -> Result<InterpolatedCommand, &'static str> {
         let a : Result<Vec<InterpolatedCommandArgument>, &'static str> = self.args.iter().map(|x| match x {
             CommandArgument::Const(v) => Ok(InterpolatedCommandArgument::Const(*v)),
-            CommandArgument::ContextRef(k) => match ctx.vals.get(&k) {
-                Some(v) => Ok(InterpolatedCommandArgument::ContextRef(*k, *v)),
+            CommandArgument::Ref(k) => match ctx.vals.get(&k) {
+                Some(v) => Ok(InterpolatedCommandArgument::Ref(*k, *v)),
                 None => Err(*k)
             },
         }).collect();
@@ -86,6 +84,9 @@ enum ExecOp {
     ContextRemove(ContextId),
     ThreadCreate(ThreadId),
     ThreadRemove(ThreadId),
+    
+    // proceed the thread to the next command
+    ThreadNext(ThreadId, LockId, CommandId),
 }
 
 struct ExecOpX {
