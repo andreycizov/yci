@@ -29,15 +29,27 @@ struct Thread {
     state: ThreadState,
 }
 
+impl Thread {
+    fn create(id: ThreadId, ip: CommandId, ctx: ContextId) -> Self {
+        Thread {
+            id: id,
+            step: 0,
+            ip: ip,
+            ctx: ctx,
+            state: ThreadState::Created,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 enum ThreadState {
-    Started,
+    Created,
     Fetching(CommandId),
     Fetched(Command),
     Interpolating(Command),
     Queued(InterpolatedCommand),
-    //Running(InterpolatedCommand, LockId),
-    Done { nip: CommandId },
+    // Running(InterpolatedCommand, LockId),
+    Done,
 
     // Waiting
     Paused,
@@ -181,7 +193,7 @@ enum ExecOp {
     ContextCopy { id: ContextIdent, ident: ContextIdent, val: ContextIdent },
     ContextSet { ident: ContextIdent, val: ContextValue },
     ContextRemove { id: ContextIdent },
-    ThreadCreate { id: ContextIdent, ip: CommandId, ctx: ContextIdent },
+    ThreadCreate { id: ContextIdent, ip: ContextIdent, ctx: ContextIdent },
     ThreadRemove { id: ContextIdent },
     SetNIP { id: CommandId },
     SetContext { id: ContextId },
@@ -190,8 +202,11 @@ enum ExecOp {
 #[derive(Debug, Clone)]
 pub enum ExecErrReason {
     ContextDoesNotExist { id: ContextId },
-    ThreadDoesNotExist { id: ContextId },
-    ContextRefInvalid { ident: ContextIdent },
+    ThreadDoesNotExist { id: ThreadId },
+    ContextRefInvalid { ident: ContextValue },
+    ThreadRefInvalid { ident: ContextValue },
+    CommandRefInvalid { ident: ContextValue },
+    PostStepped { current: StepId, selected: StepId },
     UnknownOp,
 }
 
@@ -259,7 +274,7 @@ impl DPU {
                         None => return context_err(i, ExecErrReason::ContextDoesNotExist { id: ident_int })
                     };
                 }
-                ExecOp::ContextSet { ident: ident, val: val } => {
+                ExecOp::ContextSet { ident, val } => {
                     context.vals.insert(ident.clone(), val.clone());
                 }
                 ExecOp::ContextRemove { id: ident } => {
@@ -270,10 +285,29 @@ impl DPU {
                         None => return context_err(i, ExecErrReason::ContextDoesNotExist { id: ident.clone() })
                     }
                 }
-                ExecOp::SetNIP { id: id } => {
+                ExecOp::ThreadCreate { id, ip, ctx } => {
+                    let id: u128 = self.rng.gen();
+
+                    let ip = context_get(&ip)?;
+                    let ctx = context_get(&ip)?;
+
+                    let ip = parse_id(&ip, ExecErrReason::CommandRefInvalid { ident: ip.clone() })?;
+                    let ctx = parse_id(&ctx, ExecErrReason::ContextRefInvalid { ident: ctx.clone() })?;
+
+                    self.threads.insert(id, Thread::create(id, ip, ctx));
+                }
+                ExecOp::ThreadRemove { id: ident } => {
+                    let ident = parse_id(&context_get(ident)?, ExecErrReason::ThreadRefInvalid { ident: ident.clone() })?;
+
+                    match self.contexts.remove(&ident) {
+                        Some(_) => {}
+                        None => return context_err(i, ExecErrReason::ThreadDoesNotExist { id: ident.clone() })
+                    }
+                }
+                ExecOp::SetNIP { id } => {
                     thread.ip = id.clone()
                 }
-                ExecOp::SetContext { id: id } => {
+                ExecOp::SetContext { id } => {
                     thread.ctx = id.clone()
                 }
                 _ => return context_err(i, ExecErrReason::UnknownOp)
@@ -288,18 +322,15 @@ impl DPU {
         Ok(())
     }
 
-    pub fn done(&mut self, id: &ThreadId, step: StepId, ops: &Vec<ExecOp>) -> Result<(), &str> {
+    pub fn done(&mut self, id: &ThreadId, step: StepId, ops: &Vec<ExecOp>) -> Result<(), ExecErr> {
         if let Some(x) = self.threads.get(id) {
             if x.step == step {
-
-                //let &mut thread = x;
-                //thread.step += 1;
-                return Ok(());
+                return Ok(self.exec(id, ops)?);
             } else {
-                return Err("post-stepped");
+                return Err(ExecErr { op_index: None, op_reason: ExecErrReason::PostStepped { current: x.step, selected: step } });
             }
         } else {
-            return Err("side-stepped");
+            return Err(ExecErr { op_index: None, op_reason: ExecErrReason::ThreadDoesNotExist { id: *id }});
         };
     }
 }
