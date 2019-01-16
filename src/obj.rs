@@ -7,8 +7,8 @@ type ContextId = Id;
 type CommandId = Id;
 type SignalId = Id;
 
-pub type ContextIdent<'a> = &'a str;
-pub type ContextValue<'a> = &'a str;
+pub type ContextIdent = String;
+pub type ContextValue = String;
 
 struct Thread {
     id: ThreadId,
@@ -16,12 +16,12 @@ struct Thread {
     ctx: ContextId,
 }
 
-enum ThreadState<'a> {
+enum ThreadState {
     Started,
     Fetching(CommandId),
-    Fetched(Command<'a>),
-    Interpolating(Command<'a>),
-    Queued(InterpolatedCommand<'a>),
+    Fetched(Command),
+    Interpolating(Command),
+    Queued(InterpolatedCommand),
     //Running(InterpolatedCommand, LockId),
     Done(CommandId),
     Signal(SignalId),
@@ -30,44 +30,44 @@ enum ThreadState<'a> {
 }
 
 #[derive(Debug)]
-pub struct Context<'a> {
+pub struct Context {
     id: ContextId,
-    vals: HashMap<ContextIdent<'a>, ContextValue<'a>>,
+    vals: HashMap<ContextIdent, ContextValue>,
 }
 
 #[derive(Debug, Clone)]
-pub struct Command<'a> {
+pub struct Command {
     id: CommandId,
-    opcode: CommandArgument<'a>,
-    args: Vec<CommandArgument<'a>>,
+    opcode: CommandArgument,
+    args: Vec<CommandArgument>,
 }
 
 #[derive(Debug, Clone)]
-pub struct InterpolatedCommand<'a> {
+pub struct InterpolatedCommand {
     id: CommandId,
-    opcode: InterpolatedCommandArgument<'a>,
-    args: Vec<InterpolatedCommandArgument<'a>>,
+    opcode: InterpolatedCommandArgument,
+    args: Vec<InterpolatedCommandArgument>,
 }
 
 #[derive(Debug, Clone)]
-pub enum CommandArgument<'a> {
+pub enum CommandArgument {
     // value
-    Const(ContextValue<'a>),
+    Const(ContextValue),
     // name of the ctx variable that has the value
-    Ref(ContextIdent<'a>),
+    Ref(ContextIdent),
 }
 
 #[derive(Debug, Clone)]
-pub enum InterpolatedCommandArgument<'a> {
-    Const(ContextValue<'a>),
-    Ref(ContextIdent<'a>, ContextValue<'a>),
+pub enum InterpolatedCommandArgument {
+    Const(ContextValue),
+    Ref(ContextIdent, ContextValue),
 }
 
-impl<'a> Context<'a> {
-    pub fn create<'c>(
+impl Context {
+    pub fn create(
         id: ContextId,
-        vals: HashMap<ContextIdent<'c>, ContextValue<'c>>,
-    ) -> Context<'c> {
+        vals: HashMap<ContextIdent, ContextValue>,
+    ) -> Context {
         Context {
             id,
             vals,
@@ -75,12 +75,12 @@ impl<'a> Context<'a> {
     }
 }
 
-impl<'a> Command<'a> {
-    pub fn create<'c>(
+impl Command {
+    pub fn create(
         id: CommandId,
-        opcode: CommandArgument<'c>,
-        args: Vec<CommandArgument<'c>>,
-    ) -> Command<'c> {
+        opcode: CommandArgument,
+        args: Vec<CommandArgument>,
+    ) -> Command {
         Command {
             id,
             opcode,
@@ -88,30 +88,30 @@ impl<'a> Command<'a> {
         }
     }
 
-    pub fn interpolate<'inp, 'ret, 'ctx>(&'inp self, ctx: &'ctx Context<'ctx>) -> Result<InterpolatedCommand<'ret>, &'ret str> {
+    pub fn interpolate(&self, ctx: &Context) -> Result<InterpolatedCommand, String> {
         let args = {
-            self.args.iter().map(|&x| match x {
-                CommandArgument::Const(v) => Ok(InterpolatedCommandArgument::Const::<'ret>((*v).into())),
-                CommandArgument::Ref(k) => match &ctx.vals.get(k) {
-                    Some(v) => Ok(InterpolatedCommandArgument::Ref::<'ret>((*k).into(), (**v).into())),
-                    None => Err((*k).into())
+            self.args.iter().map(|x| match x {
+                CommandArgument::Const(v) => Ok(InterpolatedCommandArgument::Const(v.clone())),
+                CommandArgument::Ref(k) => match ctx.vals.get(k) {
+                    Some(v) => Ok(InterpolatedCommandArgument::Ref(k.clone(), v.clone())),
+                    None => Err(k.clone())
                 },
             }).collect()
         };
 
-        let a: Result<Vec<InterpolatedCommandArgument<'ret>>, &'ret str> = args;
+        let a: Result<Vec<InterpolatedCommandArgument>, String> = args;
 
         let opcode = {
             match &self.opcode {
-                CommandArgument::Const(v) => Ok(InterpolatedCommandArgument::Const::<'ret>((*v).into())),
-                CommandArgument::Ref(k) => match &ctx.vals.get(k) {
-                    Some(v) => Ok(InterpolatedCommandArgument::Ref((*k).into(), (**v).into())),
-                    None => Err((*k).into())
+                CommandArgument::Const(v) => Ok(InterpolatedCommandArgument::Const(v.clone())),
+                CommandArgument::Ref(k) => match ctx.vals.get(k) {
+                    Some(v) => Ok(InterpolatedCommandArgument::Ref(k.clone(), v.clone())),
+                    None => Err(k.clone())
                 },
             }
         };
 
-        Ok(InterpolatedCommand::<'ret> {
+        Ok(InterpolatedCommand {
             id: self.id,
             opcode: opcode?,
             args: a?,
