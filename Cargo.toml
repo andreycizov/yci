@@ -4,4 +4,13 @@ version = "0.1.0"
 authors = ["Andrey Cizov <acizov@gmail.com>"]
 edition = "2018"
 
+
+[lib]
+name = "yci"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ycie"
+path = "src/bin.rs"
+
 [dependencies]

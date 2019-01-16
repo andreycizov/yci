@@ -5,9 +5,10 @@ type ThreadId = Id;
 type LockId = Id;
 type ContextId = Id;
 type CommandId = Id;
+type SignalId = Id;
 
-type ContextIdent = str;
-type ContextValue = str;
+pub type ContextIdent<'a> = &'a str;
+pub type ContextValue<'a> = &'a str;
 
 struct Thread {
     id: ThreadId,
@@ -15,82 +16,126 @@ struct Thread {
     ctx: ContextId,
 }
 
-enum ThreadState {
+enum ThreadState<'a> {
     Started,
     Fetching(CommandId),
-    Fetched(Command),
-    Interpolating(Command),
-    Queued(InterpolatedCommand),
-    Locked(InterpolatedCommand, LockId),
+    Fetched(Command<'a>),
+    Interpolating(Command<'a>),
+    Queued(InterpolatedCommand<'a>),
+    //Running(InterpolatedCommand, LockId),
     Done(CommandId),
+    Signal(SignalId),
+    Paused,
     Exited,
 }
 
-struct Context {
+#[derive(Debug)]
+pub struct Context<'a> {
     id: ContextId,
-    vals: HashMap<ContextIdent, ContextValue>,
+    vals: HashMap<ContextIdent<'a>, ContextValue<'a>>,
 }
 
-
-pub struct Command {
+#[derive(Debug, Clone)]
+pub struct Command<'a> {
     id: CommandId,
-    args: Vec<CommandArgument>,
+    opcode: CommandArgument<'a>,
+    args: Vec<CommandArgument<'a>>,
 }
 
-struct InterpolatedCommand {
+#[derive(Debug, Clone)]
+pub struct InterpolatedCommand<'a> {
     id: CommandId,
-    args: Vec<InterpolatedCommandArgument>,
+    opcode: InterpolatedCommandArgument<'a>,
+    args: Vec<InterpolatedCommandArgument<'a>>,
 }
 
-enum CommandArgument {
+#[derive(Debug, Clone)]
+pub enum CommandArgument<'a> {
     // value
-    Const(ContextValue),
+    Const(ContextValue<'a>),
     // name of the ctx variable that has the value
-    Ref(ContextIdent),
+    Ref(ContextIdent<'a>),
 }
 
-enum InterpolatedCommandArgument {
-    Const(ContextValue),
-    Ref(ContextIdent, ContextValue),
+#[derive(Debug, Clone)]
+pub enum InterpolatedCommandArgument<'a> {
+    Const(ContextValue<'a>),
+    Ref(ContextIdent<'a>, ContextValue<'a>),
 }
 
-impl Command for Command {
-    fn interpolate(self, ctx: Context) -> Result<InterpolatedCommand, &'static str> {
-        let a : Result<Vec<InterpolatedCommandArgument>, &'static str> = self.args.iter().map(|x| match x {
-            CommandArgument::Const(v) => Ok(InterpolatedCommandArgument::Const(*v)),
-            CommandArgument::Ref(k) => match ctx.vals.get(&k) {
-                Some(v) => Ok(InterpolatedCommandArgument::Ref(*k, *v)),
-                None => Err(*k)
-            },
-        }).collect();
-        
-        Ok(InterpolatedCommand {
+impl<'a> Context<'a> {
+    pub fn create<'c>(
+        id: ContextId,
+        vals: HashMap<ContextIdent<'c>, ContextValue<'c>>,
+    ) -> Context<'c> {
+        Context {
+            id,
+            vals,
+        }
+    }
+}
+
+impl<'a> Command<'a> {
+    pub fn create<'c>(
+        id: CommandId,
+        opcode: CommandArgument<'c>,
+        args: Vec<CommandArgument<'c>>,
+    ) -> Command<'c> {
+        Command {
+            id,
+            opcode,
+            args,
+        }
+    }
+
+    pub fn interpolate<'inp, 'ret, 'ctx>(&'inp self, ctx: &'ctx Context<'ctx>) -> Result<InterpolatedCommand<'ret>, &'ret str> {
+        let args = {
+            self.args.iter().map(|&x| match x {
+                CommandArgument::Const(v) => Ok(InterpolatedCommandArgument::Const::<'ret>((*v).into())),
+                CommandArgument::Ref(k) => match &ctx.vals.get(k) {
+                    Some(v) => Ok(InterpolatedCommandArgument::Ref::<'ret>((*k).into(), (**v).into())),
+                    None => Err((*k).into())
+                },
+            }).collect()
+        };
+
+        let a: Result<Vec<InterpolatedCommandArgument<'ret>>, &'ret str> = args;
+
+        let opcode = {
+            match &self.opcode {
+                CommandArgument::Const(v) => Ok(InterpolatedCommandArgument::Const::<'ret>((*v).into())),
+                CommandArgument::Ref(k) => match &ctx.vals.get(k) {
+                    Some(v) => Ok(InterpolatedCommandArgument::Ref((*k).into(), (**v).into())),
+                    None => Err((*k).into())
+                },
+            }
+        };
+
+        Ok(InterpolatedCommand::<'ret> {
             id: self.id,
+            opcode: opcode?,
             args: a?,
         })
     }
 }
-
-
-struct DPU {
-    commands: HashMap<CommandId, Command>,
-    contexts: HashMap<ContextId, Context>,
-    threads: HashMap<ThreadId, Thread>,
-}
-
-enum ExecOp {
-    ContextCreate(ContextId),
-    ContextSet(ContextIdent, ContextValue),
-    ContextRemove(ContextId),
-    ThreadCreate(ThreadId),
-    ThreadRemove(ThreadId),
-    
-    // proceed the thread to the next command
-    ThreadNext(ThreadId, LockId, CommandId),
-}
-
-struct ExecOpX {
-    thread_id: u128,
-}
-
-
+//
+//
+//struct DPU<'a> {
+//    commands: HashMap<CommandId, Command<'a>>,
+//    contexts: HashMap<ContextId, Context<'a>>,
+//    threads: HashMap<ThreadId, Thread>,
+//}
+//
+//enum ExecOp<'a> {
+//    ContextCreate(ContextId),
+//    ContextSet(ContextIdent<'a>, ContextValue<'a>),
+//    ContextRemove(ContextId),
+//    ThreadCreate(ThreadId),
+//    ThreadRemove(ThreadId),
+//
+//    // proceed the thread to the next command
+//    ThreadNext(ThreadId, LockId, CommandId),
+//
+//    SetIP(CommandId),
+//    SetContext(ContextId),
+//}
