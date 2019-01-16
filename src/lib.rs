@@ -3,7 +3,7 @@ use std::collections::HashMap;
 pub mod obj;
 
 pub fn main() {
-    let y1 = String::from("a");
+    let y1 = "a";
     let y2 = String::from("bcde");
     let y3 = String::from("c");
 
@@ -19,7 +19,7 @@ pub fn main() {
     let c = {
         let a = obj::Command::create(
             2,
-            obj::CommandArgument::Ref(y1),
+            obj::CommandArgument::Ref(y1.into()),
             vec![
                 obj::CommandArgument::Const(y2),
                 obj::CommandArgument::Ref(y3),

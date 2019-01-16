@@ -3,6 +3,7 @@ use std::collections::HashMap;
 type Id = u128;
 type ThreadId = Id;
 type LockId = Id;
+type StepId = Id;
 type ContextId = Id;
 type CommandId = Id;
 type SignalId = Id;
@@ -11,8 +12,13 @@ pub type ContextIdent = String;
 pub type ContextValue = String;
 
 struct Thread {
+    // Identity
     id: ThreadId,
+    // For every opcode executed, goes up by one
+    step: StepId,
+    // Instruction pointer
     ip: CommandId,
+    // Context pointer
     ctx: ContextId,
 }
 
@@ -24,12 +30,13 @@ enum ThreadState {
     Queued(InterpolatedCommand),
     //Running(InterpolatedCommand, LockId),
     Done(CommandId),
-    Signal(SignalId),
+
+    // Waiting
     Paused,
     Exited,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Context {
     id: ContextId,
     vals: HashMap<ContextIdent, ContextValue>,
@@ -89,26 +96,20 @@ impl Command {
     }
 
     pub fn interpolate(&self, ctx: &Context) -> Result<InterpolatedCommand, String> {
-        let args = {
-            self.args.iter().map(|x| match x {
-                CommandArgument::Const(v) => Ok(InterpolatedCommandArgument::Const(v.clone())),
-                CommandArgument::Ref(k) => match ctx.vals.get(k) {
-                    Some(v) => Ok(InterpolatedCommandArgument::Ref(k.clone(), v.clone())),
-                    None => Err(k.clone())
-                },
-            }).collect()
-        };
+        let a: Result<Vec<InterpolatedCommandArgument>, String> =  self.args.iter().map(|x| match x {
+            CommandArgument::Const(v) => Ok(InterpolatedCommandArgument::Const(v.clone())),
+            CommandArgument::Ref(k) => match ctx.vals.get(k) {
+                Some(v) => Ok(InterpolatedCommandArgument::Ref(k.clone(), v.clone())),
+                None => Err(k.clone())
+            },
+        }).collect();
 
-        let a: Result<Vec<InterpolatedCommandArgument>, String> = args;
-
-        let opcode = {
-            match &self.opcode {
-                CommandArgument::Const(v) => Ok(InterpolatedCommandArgument::Const(v.clone())),
-                CommandArgument::Ref(k) => match ctx.vals.get(k) {
-                    Some(v) => Ok(InterpolatedCommandArgument::Ref(k.clone(), v.clone())),
-                    None => Err(k.clone())
-                },
-            }
+        let opcode =  match &self.opcode {
+            CommandArgument::Const(v) => Ok(InterpolatedCommandArgument::Const(v.clone())),
+            CommandArgument::Ref(k) => match ctx.vals.get(k) {
+                Some(v) => Ok(InterpolatedCommandArgument::Ref(k.clone(), v.clone())),
+                None => Err(k.clone())
+            },
         };
 
         Ok(InterpolatedCommand {
@@ -118,13 +119,13 @@ impl Command {
         })
     }
 }
-//
-//
-//struct DPU<'a> {
-//    commands: HashMap<CommandId, Command<'a>>,
-//    contexts: HashMap<ContextId, Context<'a>>,
-//    threads: HashMap<ThreadId, Thread>,
-//}
+
+
+struct DPU<'a> {
+    commands: HashMap<CommandId, Command>,
+    contexts: HashMap<ContextId, Context>,
+    threads: HashMap<ThreadId, Thread>,
+}
 //
 //enum ExecOp<'a> {
 //    ContextCreate(ContextId),
