@@ -4,6 +4,14 @@ extern crate rand;
 use std::collections::HashMap;
 
 pub mod obj;
+pub mod microcode;
+pub mod daemon;
+
+//pub use obj;
+//pub use microcode;
+
+#[cfg(test)]
+mod tests;
 
 pub fn main() {
     let y1 = "a";
