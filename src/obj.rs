@@ -41,11 +41,26 @@ pub(crate) struct Command {
     pub(crate) args: Vec<CommandArgument>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct InterpolatedCommand {
     id: CommandId,
     opcode: InterpolatedCommandArgument,
     args: Vec<InterpolatedCommandArgument>,
+}
+
+impl InterpolatedCommand {
+    pub fn create(
+        id: CommandId,
+        opcode: InterpolatedCommandArgument,
+        args: Vec<InterpolatedCommandArgument>,
+    ) -> Self {
+        InterpolatedCommand {
+            id,
+            opcode,
+            args,
+        }
+
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -56,7 +71,7 @@ pub(crate) enum CommandArgument {
     Ref(ContextIdent),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum InterpolatedCommandArgument {
     Const(ContextValue),
     Ref(ContextIdent, ContextValue),
