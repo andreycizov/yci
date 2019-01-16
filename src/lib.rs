@@ -1,3 +1,6 @@
+extern crate uuid;
+extern crate rand;
+
 use std::collections::HashMap;
 
 pub mod obj;
