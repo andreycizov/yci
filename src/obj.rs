@@ -17,6 +17,7 @@ use uuid;
 #[derive(Debug, Clone)]
 pub(crate) struct Worker {
     capacity: u64,
+    queues: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -43,9 +44,9 @@ pub(crate) struct Command {
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct InterpolatedCommand {
-    id: CommandId,
-    opcode: InterpolatedCommandArgument,
-    args: Vec<InterpolatedCommandArgument>,
+    pub(crate) id: CommandId,
+    pub(crate) opcode: InterpolatedCommandArgument,
+    pub(crate) args: Vec<InterpolatedCommandArgument>,
 }
 
 impl InterpolatedCommand {
@@ -71,10 +72,20 @@ pub(crate) enum CommandArgument {
     Ref(ContextIdent),
 }
 
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum InterpolatedCommandArgument {
     Const(ContextValue),
     Ref(ContextIdent, ContextValue),
+}
+
+impl InterpolatedCommandArgument {
+    pub fn value(&self) -> ContextValue {
+        match self {
+            InterpolatedCommandArgument::Const(x) => x.clone(),
+            InterpolatedCommandArgument::Ref(_, x) => x.clone(),
+        }
+    }
 }
 
 impl Context {

@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::collections::VecDeque;
 
 use super::obj::*;
+use std::collections::HashSet;
 
 #[derive(Debug, Clone)]
 pub(crate) struct Thread {
@@ -24,18 +25,28 @@ pub(crate) struct Thread {
 }
 
 #[derive(Debug, Clone)]
+pub enum ThreadError {
+    Fetch { id: CommandId },
+    Context { id: ContextId },
+    Interpolate { err: String },
+}
+
+#[derive(Debug, Clone)]
 pub(crate) enum ThreadState {
     Created,
     Fetching(CommandId),
     Fetched(Command),
     Interpolating(Command),
+    Interpolated(InterpolatedCommand),
     Queued(InterpolatedCommand),
     // Running(InterpolatedCommand, LockId),
     Done,
 
+    Error(ThreadError),
+
     // Waiting
     Paused,
-    Exited,
+    Exited(Result<(), ThreadError>),
 }
 
 struct DPU {
@@ -44,6 +55,8 @@ struct DPU {
     threads: HashMap<ThreadId, Thread>,
 
     queues: HashMap<ContextValue, VecDeque<ThreadId>>,
+
+    queues_workers: HashMap<String, HashSet<WorkerId>>,
     workers: HashMap<WorkerId, Worker>,
 
     rng: ThreadRng,
@@ -99,6 +112,8 @@ impl Default for DPU {
             threads: HashMap::<ThreadId, Thread>::default(),
 
             queues: HashMap::<ContextValue, VecDeque<ThreadId>>::default(),
+
+            queues_workers: HashMap::<String, HashSet<WorkerId>>::default(),
             workers: HashMap::<WorkerId, Worker>::default(),
 
             rng: ThreadRng::default(),
@@ -113,6 +128,77 @@ impl DPU {
     pub fn load(&mut self, commands: &Vec<Command>) {
         for command in commands {
             self.commands.insert(command.id, command.clone());
+        }
+    }
+
+    fn proceed(&mut self, id: &ThreadId) {
+        loop {
+            let mut thread = match self.threads.get_mut(id) {
+                Some(x) => x,
+                None => return
+            };
+
+            match &thread.state {
+                ThreadState::Created => {
+                    thread.state = ThreadState::Fetching(thread.ip);
+                }
+                ThreadState::Done => {
+                    thread.state = ThreadState::Fetching(thread.ip)
+                }
+                ThreadState::Fetching(ip) => {
+                    match self.commands.get(&ip) {
+                        Some(x) => {
+                            thread.state = ThreadState::Fetched(x.clone());
+                        }
+                        None => {
+                            thread.state = ThreadState::Error(ThreadError::Fetch { id: *ip })
+                        }
+                    }
+                }
+                ThreadState::Fetched(command) => {
+                    thread.state = ThreadState::Interpolating(command.clone());
+                }
+                ThreadState::Interpolating(command) => {
+                    match self.contexts.get(&thread.ctx) {
+                        Some(ctx) => {
+                            match command.interpolate(ctx) {
+                                Ok(x) => {
+                                    thread.state = ThreadState::Interpolated(x)
+                                }
+                                Err(x) => {
+                                    thread.state = ThreadState::Error(ThreadError::Interpolate { err: x })
+                                }
+                            }
+                        }
+                        None => {
+                            thread.state = ThreadState::Error(ThreadError::Context { id: thread.ctx.clone() })
+                        }
+                    }
+                }
+                ThreadState::Interpolated(command) => {
+                    let queue: &mut VecDeque<ThreadId> = {
+                        let queue_name = &command.opcode.value();
+
+                        if !self.queues.contains_key(queue_name) {
+                            self.queues.insert(queue_name.clone(), VecDeque::<ThreadId>::default());
+                        }
+
+                        match self.queues.get_mut(queue_name) {
+                            Some(x) => x,
+                            None => {
+                                panic!("Should never happen")
+                            }
+                        }
+                    };
+
+                    queue.push_back(thread.id.clone());
+
+                    thread.state = ThreadState::Queued(command.clone());
+                }
+//                ThreadState::Queued(command) => {
+//                    command.opcode.value()
+//                }
+            };
         }
     }
 
