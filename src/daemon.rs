@@ -188,7 +188,7 @@ impl DPU {
                         }
                     }
                 }
-                ThreadState::Assigned(command) => {
+                ThreadState::Assigned(command, worker_id) => {
                     return
                 }
                 ThreadState::Queued(command) => {

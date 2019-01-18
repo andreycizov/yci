@@ -9,24 +9,12 @@ pub(crate) struct PubSubJob<QK: Clone + Eq + Hash + PartialEq, JK: Clone + Eq + 
     jk: JK,
 }
 
-impl<QK: Clone + Eq + Hash + PartialEq, JK: Clone + Eq + Hash + PartialEq> PubSubJob<QK, JK> {
-    fn inst(qk: QK, jk: JK) -> Self {
-        PubSubJob { qk, jk }
-    }
-}
-
 #[derive(Clone, Debug)]
 pub(crate) struct PubSubWorkerInfo<WK, QK: Clone + Eq + Hash, JK: Clone + Eq + Hash> {
     pub(crate) key: WK,
     pub(crate) current: HashSet<PubSubJob<QK, JK>>,
     pub(crate) capacity: usize,
     pub(crate) queues: Vec<QK>,
-}
-
-impl<WK, QK: Clone + Eq + Hash, JK: Clone + Eq + Hash> PubSubWorkerInfo<WK, QK, JK> {
-    pub fn ready(&self) -> bool {
-        return self.current.len() < self.capacity;
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -36,25 +24,12 @@ pub(crate) struct PubSub<WK: Clone + Eq + Hash, QK: Clone + Eq + Hash, JK: Clone
     pub(crate) jobs_workers: HashMap<JK, WK>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Assignment<WK: Clone + Eq + Hash, QK: Clone + Eq + Hash, JK: Clone + Eq + Hash> {
     pub(crate) action: Action,
     pub(crate) worker_key: WK,
     pub(crate) queue_key: QK,
     pub(crate) job_key: JK,
-}
-
-#[derive(Clone, Debug)]
-pub enum Action {
-    Started,
-    Done,
-    Cancelled,
-}
-
-impl<WK: Clone + Eq + Hash, QK: Clone + Eq + Hash, JK: Clone + Eq + Hash> Assignment<WK, QK, JK> {
-    pub fn new(action: Action, worker_key: WK, queue_key: QK, job_key: JK) -> Assignment<WK, QK, JK> {
-        Assignment { action, worker_key, queue_key, job_key }
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -64,6 +39,25 @@ pub(crate) struct MultiQueue<WK: Clone + Eq + Hash, QK: Clone + Eq + Hash, JK: C
     pub(crate) worker_queues: HashMap<WK, Vec<QK>>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Action {
+    Started,
+    Done,
+    Cancelled,
+}
+
+impl<QK: Clone + Eq + Hash, JK: Clone + Eq + Hash> PubSubJob<QK, JK> {
+    fn inst(qk: QK, jk: JK) -> Self {
+        PubSubJob { qk, jk }
+    }
+}
+
+impl<WK: Clone + Eq + Hash, QK: Clone + Eq + Hash, JK: Clone + Eq + Hash> Assignment<WK, QK, JK> {
+    pub fn new(action: Action, worker_key: WK, queue_key: QK, job_key: JK) -> Assignment<WK, QK, JK> {
+        Assignment { action, worker_key, queue_key, job_key }
+    }
+}
+
 impl<WK: Clone + Eq + Hash, QK: Clone + Eq + Hash, JK: Clone + Eq + Hash> Default for PubSub<WK, QK, JK> {
     fn default() -> Self {
         PubSub {
@@ -71,6 +65,12 @@ impl<WK: Clone + Eq + Hash, QK: Clone + Eq + Hash, JK: Clone + Eq + Hash> Defaul
             queues_workers: HashMap::<QK, HashSet<WK>>::default(),
             jobs_workers: HashMap::<JK, WK>::default(),
         }
+    }
+}
+
+impl<WK, QK: Clone + Eq + Hash, JK: Clone + Eq + Hash> PubSubWorkerInfo<WK, QK, JK> {
+    pub fn ready(&self) -> bool {
+        return self.current.len() < self.capacity;
     }
 }
 
@@ -167,7 +167,12 @@ impl<WK: Clone + Eq + Hash, QK: Clone + Eq + Hash, JK: Clone + Eq + Hash> PubSub
     }
 }
 
-impl<WK: Clone + Eq + Hash, QK: Clone + Eq + Hash, JK: Clone + Eq + Hash> MultiQueue<WK, QK, JK> {
+use std;
+
+impl<WK: Clone + Eq + Hash, QK: Clone + Eq + Hash, JK: Clone + Eq + Hash> MultiQueue<WK, QK, JK>
+    where QK: std::fmt::Debug,
+          JK: std::fmt::Debug
+{
     fn assignment(capacity: usize) -> Vec<Assignment<WK, QK, JK>> {
         Vec::<Assignment<WK, QK, JK>>::with_capacity(capacity)
     }
@@ -179,11 +184,26 @@ impl<WK: Clone + Eq + Hash, QK: Clone + Eq + Hash, JK: Clone + Eq + Hash> MultiQ
                 queue_key.clone(),
                 job_key.clone(),
             )],
-            None => vec![]
+            None => {
+                if !self.queues.contains_key(queue_key) {
+                    self.queues.insert(queue_key.clone(), VecDeque::<JK>::default());
+                }
+
+                match self.queues.get_mut(queue_key) {
+                    Some(x) => {
+                        x.push_back(job_key.clone());
+                    },
+                    None => panic!("should never happen")
+                };
+
+                vec![]
+            }
         }
     }
 
     pub fn job_finish(&mut self, queue_key: &QK, job_key: &JK) -> Vec<Assignment<WK, QK, JK>> {
+        // todo what if the job is not assigned yet?
+
         let mut assignment = Self::assignment(2);
 
         let worker_key = self.pubsub.resign(queue_key, job_key);
@@ -200,6 +220,11 @@ impl<WK: Clone + Eq + Hash, QK: Clone + Eq + Hash, JK: Clone + Eq + Hash> MultiQ
     }
 
     pub fn worker_add(&mut self, key: WK, capacity: usize, queues: Vec<QK>) -> Vec<Assignment<WK, QK, JK>> {
+        match self.worker_queues.get(&key) {
+            Some(x) => panic!("worker already exists"),
+            None => {}
+        }
+
         self.pubsub.add(key.clone(), capacity, &queues);
 
         self.worker_queues.insert(key, queues.clone());
@@ -250,20 +275,19 @@ impl<WK: Clone + Eq + Hash, QK: Clone + Eq + Hash, JK: Clone + Eq + Hash> MultiQ
                         match capacity {
                             Some(x) => {
                                 capacity = Some(x - 1)
-                            },
+                            }
                             None => {
-                                continue
+                                continue;
                             }
                         }
                     }
                     None => {
-
                         match capacity {
                             Some(mut x) => {
                                 capacity = Some(0)
-                            },
+                            }
                             None => {
-                                continue
+                                continue;
                             }
                         }
                     }
