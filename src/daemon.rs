@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::collections::VecDeque;
 
 use super::obj::*;
-use std::collections::HashSet;
+use super::pubsub::*;
 
 #[derive(Debug, Clone)]
 pub(crate) struct Thread {
@@ -56,7 +56,7 @@ struct DPU {
 
     queues: HashMap<ContextValue, VecDeque<ThreadId>>,
 
-    queues_workers: HashMap<String, HashSet<WorkerId>>,
+    pubsub: PubSub<WorkerId, ContextValue, ThreadId>,
     workers: HashMap<WorkerId, Worker>,
 
     rng: ThreadRng,
@@ -113,7 +113,7 @@ impl Default for DPU {
 
             queues: HashMap::<ContextValue, VecDeque<ThreadId>>::default(),
 
-            queues_workers: HashMap::<String, HashSet<WorkerId>>::default(),
+            pubsub: PubSub::<WorkerId, ContextValue, ThreadId>::default(),
             workers: HashMap::<WorkerId, Worker>::default(),
 
             rng: ThreadRng::default(),
@@ -191,13 +191,24 @@ impl DPU {
                         }
                     };
 
-                    queue.push_back(thread.id.clone());
-
                     thread.state = ThreadState::Queued(command.clone());
                 }
-//                ThreadState::Queued(command) => {
-//                    command.opcode.value()
-//                }
+                ThreadState::Queued(command) => {
+                    let key = command.opcode.value();
+
+                    match self.pubsub.assign(&key, &thread.id) {
+                        Some(worker_id) => {
+                            break;
+                        },
+                        None => {
+                            queue.push_back(thread.id.clone());
+                            return
+                        }
+                    };
+                }
+                _ => {
+                    panic!("");
+                }
             };
         }
     }
@@ -293,8 +304,12 @@ impl DPU {
 
         thread.step.wrapping_add(1);
 
+        let thread_id = thread.id.clone();
+
         self.threads.insert(thread.id, thread);
         self.contexts.insert(context.id, context);
+
+        self.proceed(&thread_id);
 
         Ok(())
     }

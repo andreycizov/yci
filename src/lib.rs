@@ -6,6 +6,7 @@ use std::collections::HashMap;
 pub mod obj;
 pub mod microcode;
 pub mod daemon;
+pub mod pubsub;
 
 //pub use obj;
 //pub use microcode;
