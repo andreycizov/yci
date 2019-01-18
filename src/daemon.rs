@@ -39,6 +39,7 @@ pub(crate) enum ThreadState {
     Interpolating(Command),
     Interpolated(InterpolatedCommand),
     Queued(InterpolatedCommand),
+    Assigned(InterpolatedCommand, WorkerId),
     // Running(InterpolatedCommand, LockId),
     Done,
 
@@ -54,9 +55,9 @@ struct DPU {
     contexts: HashMap<ContextId, Context>,
     threads: HashMap<ThreadId, Thread>,
 
-    queues: HashMap<ContextValue, VecDeque<ThreadId>>,
+    //queues: HashMap<ContextValue, VecDeque<ThreadId>>,
 
-    pubsub: PubSub<WorkerId, ContextValue, ThreadId>,
+    multi_queue: MultiQueue<WorkerId, ContextValue, ThreadId>,
     workers: HashMap<WorkerId, Worker>,
 
     rng: ThreadRng,
@@ -111,9 +112,9 @@ impl Default for DPU {
             contexts: HashMap::<ContextId, Context>::default(),
             threads: HashMap::<ThreadId, Thread>::default(),
 
-            queues: HashMap::<ContextValue, VecDeque<ThreadId>>::default(),
+            //queues: HashMap::<ContextValue, VecDeque<ThreadId>>::default(),
 
-            pubsub: PubSub::<WorkerId, ContextValue, ThreadId>::default(),
+            multi_queue: MultiQueue::<WorkerId, ContextValue, ThreadId>::default(),
             workers: HashMap::<WorkerId, Worker>::default(),
 
             rng: ThreadRng::default(),
@@ -176,35 +177,22 @@ impl DPU {
                     }
                 }
                 ThreadState::Interpolated(command) => {
-                    let queue: &mut VecDeque<ThreadId> = {
-                        let queue_name = &command.opcode.value();
+                    let assignment = self.multi_queue.job_create(&command.opcode.value(), &thread.id);
 
-                        if !self.queues.contains_key(queue_name) {
-                            self.queues.insert(queue_name.clone(), VecDeque::<ThreadId>::default());
-                        }
-
-                        match self.queues.get_mut(queue_name) {
-                            Some(x) => x,
-                            None => {
-                                panic!("Should never happen")
-                            }
-                        }
-                    };
-
-                    thread.state = ThreadState::Queued(command.clone());
-                }
-                ThreadState::Queued(command) => {
-                    let key = command.opcode.value();
-
-                    match self.pubsub.assign(&key, &thread.id) {
-                        Some(worker_id) => {
-                            break;
+                    match assignment.first() {
+                        Some(x) => {
+                            thread.state = ThreadState::Assigned(command.clone(), x.worker_key)
                         },
                         None => {
-                            queue.push_back(thread.id.clone());
-                            return
+                            thread.state = ThreadState::Queued(command.clone());
                         }
-                    };
+                    }
+                }
+                ThreadState::Assigned(command) => {
+                    return
+                }
+                ThreadState::Queued(command) => {
+                    return
                 }
                 _ => {
                     panic!("");

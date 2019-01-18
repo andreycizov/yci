@@ -7,7 +7,7 @@ mod tests {
     fn test_worker_first() {
         let mut a = PubSub::<u32, u32, u32>::default();
 
-        a.add(1000, 5, vec![100, 200, 300]);
+        a.add(1000, 5, &vec![100, 200, 300]);
 
         assert_eq!(
             a.assign(&400, &50),
@@ -28,7 +28,7 @@ mod tests {
             None
         );
 
-        a.add(1000, 0, vec![100, 200, 300]);
+        a.add(1000, 0, &vec![100, 200, 300]);
 
         assert_eq!(
             a.assign(&400, &50),
