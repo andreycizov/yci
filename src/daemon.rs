@@ -162,8 +162,6 @@ impl DPU {
                 None => return
             };
 
-            dbg!(&thread);
-
             let new_state: Option<ThreadState> = match &thread.state {
                 ThreadState::Created => {
                     Some(ThreadState::Fetching(thread.ip))
@@ -253,11 +251,9 @@ impl DPU {
                 ThreadState::Exited(res) => {
                     match res {
                         Ok(_) => {
-                            dbg!((thread.clone(), "OK"));
                             None
                         }
                         Err(err) => {
-                            dbg!((thread.clone(), err));
                             None
                         }
                     }
@@ -271,8 +267,6 @@ impl DPU {
             } else {
                 should_break = true;
             }
-
-            dbg!((&thread, should_break));
 
             self.threads.insert(id.clone(), thread);
 

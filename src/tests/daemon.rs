@@ -38,8 +38,48 @@ mod tests {
         );
     }
 
+    fn create_machine_err() {
+        let mut dpu = DPU::default();
+        dpu.load(
+            &vec![
+                Command::create(
+                    0,
+                    CommandArgument::Ref("nop".to_string()),
+                    vec![],
+                ),
+                Command::create(
+                    1,
+                    CommandArgument::Const("ld".to_string()),
+                    vec![
+                        CommandArgument::Ref("addr".to_string()),
+                        CommandArgument::Const("0".to_string()),
+                    ],
+                ),
+                Command::create(
+                    2,
+                    CommandArgument::Const("jmp".to_string()),
+                    vec![
+                        CommandArgument::Ref("addr".to_string())
+                    ],
+                )
+            ]
+        );
+
+        let ctx = dpu.put_context(None);
+
+        let thread = dpu.put_thread(
+            0,
+            ctx
+        );
+    }
+
     #[test]
-    fn test_opcode() {
-        create_machine();
+    fn test_machine() {
+       // create_machine();
+    }
+
+    #[test]
+    fn test_machine_err() {
+        create_machine_err();
     }
 }
