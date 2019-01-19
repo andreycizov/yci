@@ -148,8 +148,11 @@ impl<WK: Clone + Eq + Hash, QK: Clone + Eq + Hash, JK: Clone + Eq + Hash> PubSub
         }
     }
 
-    pub fn resign(&mut self, key: &QK, job_key: &JK) -> WK {
-        let worker_id = self.jobs_workers.get(job_key).unwrap().clone();
+    pub fn resign(&mut self, key: &QK, job_key: &JK) -> Option<WK> {
+        let worker_id = match self.jobs_workers.get(job_key){
+            Some(x) => x.clone(),
+            None => return None
+        };
 
         self.jobs_workers.remove(job_key);
 
@@ -163,7 +166,7 @@ impl<WK: Clone + Eq + Hash, QK: Clone + Eq + Hash, JK: Clone + Eq + Hash> PubSub
             self.worker_enable(&worker_id);
         }
 
-        worker_id
+        Some(worker_id)
     }
 }
 
@@ -202,21 +205,46 @@ impl<WK: Clone + Eq + Hash, QK: Clone + Eq + Hash, JK: Clone + Eq + Hash> MultiQ
     }
 
     pub fn job_finish(&mut self, queue_key: &QK, job_key: &JK) -> Vec<Assignment<WK, QK, JK>> {
-        // todo what if the job is not assigned yet?
+        match self.pubsub.resign(queue_key, job_key) {
+            Some(worker_key) => {
+                let mut assignment = Self::assignment(2);
 
-        let mut assignment = Self::assignment(2);
 
-        let worker_key = self.pubsub.resign(queue_key, job_key);
 
-        assignment.push(
-            Assignment::new(Action::Done, worker_key.clone(), queue_key.clone(), job_key.clone())
-        );
+                assignment.push(
+                    Assignment::new(Action::Done, worker_key.clone(), queue_key.clone(), job_key.clone())
+                );
 
-        let vec = self.worker_queues.get(&worker_key).unwrap().clone();
+                let vec = self.worker_queues.get(&worker_key).unwrap().clone();
 
-        assignment.append(&mut self.assign_queues(&vec, Some(1)));
+                assignment.append(&mut self.assign_queues(&vec, Some(1)));
 
-        assignment
+                assignment
+            }
+            None => {
+                let queue_lookup = self.queues.get_mut(queue_key);
+
+                match queue_lookup {
+                    Some(queue) => {
+                        if let Some(index) = {
+                            let mut result = None;
+                            for (i, item) in queue.iter().enumerate() {
+                                if item == job_key {
+                                    result = Some(i);
+                                    break
+                                }
+                            }
+                            result
+                        } {
+                            queue.remove(index);
+                        }
+                    }
+                    None => {}
+                }
+
+                vec![]
+            }
+        }
     }
 
     pub fn worker_add(&mut self, key: WK, capacity: usize, queues: Vec<QK>) -> Vec<Assignment<WK, QK, JK>> {
@@ -283,7 +311,7 @@ impl<WK: Clone + Eq + Hash, QK: Clone + Eq + Hash, JK: Clone + Eq + Hash> MultiQ
                     }
                     None => {
                         match capacity {
-                            Some(mut x) => {
+                            Some(_) => {
                                 capacity = Some(0)
                             }
                             None => {

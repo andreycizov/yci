@@ -43,7 +43,7 @@ pub(crate) enum ThreadState {
     // Running(InterpolatedCommand, LockId),
     Done,
 
-    Error(ThreadError),
+    Err(ThreadError),
 
     // Waiting
     Paused,
@@ -134,45 +134,49 @@ impl DPU {
 
     fn proceed(&mut self, id: &ThreadId) {
         loop {
-            let mut thread = match self.threads.get_mut(id) {
-                Some(x) => x,
+            // whenever we re-store
+
+            let mut thread = match self.threads.get(id) {
+                Some(x) => x.clone(),
                 None => return
             };
 
-            match &thread.state {
+            dbg!(thread);
+
+            let new_state: Option<ThreadState> = match &thread.state {
                 ThreadState::Created => {
-                    thread.state = ThreadState::Fetching(thread.ip);
+                    Some(ThreadState::Fetching(thread.ip))
                 }
                 ThreadState::Done => {
-                    thread.state = ThreadState::Fetching(thread.ip)
+                    Some(ThreadState::Fetching(thread.ip))
                 }
                 ThreadState::Fetching(ip) => {
                     match self.commands.get(&ip) {
                         Some(x) => {
-                            thread.state = ThreadState::Fetched(x.clone());
+                            Some(ThreadState::Fetched(x.clone()))
                         }
                         None => {
-                            thread.state = ThreadState::Error(ThreadError::Fetch { id: *ip })
+                            Some(ThreadState::Err(ThreadError::Fetch { id: *ip }))
                         }
                     }
                 }
                 ThreadState::Fetched(command) => {
-                    thread.state = ThreadState::Interpolating(command.clone());
+                    Some(ThreadState::Interpolating(command.clone()))
                 }
                 ThreadState::Interpolating(command) => {
                     match self.contexts.get(&thread.ctx) {
                         Some(ctx) => {
                             match command.interpolate(ctx) {
                                 Ok(x) => {
-                                    thread.state = ThreadState::Interpolated(x)
+                                    Some(ThreadState::Interpolated(x))
                                 }
                                 Err(x) => {
-                                    thread.state = ThreadState::Error(ThreadError::Interpolate { err: x })
+                                    Some(ThreadState::Err(ThreadError::Interpolate { err: x }))
                                 }
                             }
                         }
                         None => {
-                            thread.state = ThreadState::Error(ThreadError::Context { id: thread.ctx.clone() })
+                            Some(ThreadState::Err(ThreadError::Context { id: thread.ctx.clone() }))
                         }
                     }
                 }
@@ -181,24 +185,88 @@ impl DPU {
 
                     match assignment.first() {
                         Some(x) => {
-                            thread.state = ThreadState::Assigned(command.clone(), x.worker_key)
+                            Some(ThreadState::Assigned(command.clone(), x.worker_key))
                         },
                         None => {
-                            thread.state = ThreadState::Queued(command.clone());
+                            Some(ThreadState::Queued(command.clone()))
                         }
                     }
                 }
-                ThreadState::Assigned(command, worker_id) => {
-                    return
-                }
                 ThreadState::Queued(command) => {
-                    return
+                    None
                 }
-                _ => {
-                    panic!("");
+                ThreadState::Assigned(command, worker_id) => {
+                    None
+                }
+                ThreadState::Paused => {
+                    None
+                }
+                ThreadState::Err(error) => {
+                    match thread.eip {
+                        Some(eip) => {
+                            thread.ip = eip;
+                            thread.eip = None;
+                            // todo ... we need to somehow pass the error to the thread back
+                            // todo should it go to the context or should it be handled as part of the
+                            // todo thread object?
+
+                            // todo should it instead go into a separate context that may later on be
+                            // todo disposed of by the thread?
+                            // todo this way threads can easily copy the exception back anywhere.
+
+                            let id = self.context_create();
+                            let err_str = format!("{:?}", error);
+
+                            self.context_mut(&id).unwrap().vals.insert(
+                                "exc".to_string(),
+                                err_str
+                            );
+                            Some(ThreadState::Done)
+                        }
+                        None => {
+                            Some(ThreadState::Exited(Err(error.clone())))
+                        }
+                    }
+                }
+                ThreadState::Exited(res) => {
+                    match res {
+                        Ok(_) => {
+                            dbg!((thread.clone(), "OK"));
+                            None
+                        }
+                        Err(err) => {
+                            dbg!((thread.clone(), err));
+                            None
+                        }
+                    }
                 }
             };
+
+            let mut should_break = false;
+
+            if let Some(state) = new_state {
+                thread.state = state;
+                should_break = true;
+            }
+
+            self.threads.insert(id.clone(), thread);
+
+            if should_break {
+                return
+            }
         }
+    }
+
+    fn context_create(&mut self) -> ContextId {
+        let id: u128 = self.rng.gen();
+
+        self.contexts.insert(id, Context::empty(id));
+
+        id
+    }
+
+    fn context_mut(&mut self, key: &ContextId) -> Option<&mut Context> {
+        self.contexts.get_mut(key)
     }
 
     fn exec(&mut self, id: &ThreadId, ops: &Vec<ExecOp>) -> Result<(), ExecErr> {
@@ -234,9 +302,7 @@ impl DPU {
 
             match op {
                 ExecOp::ContextCreate { id: ident } => {
-                    let id: u128 = self.rng.gen();
-
-                    self.contexts.insert(id, Context::empty(id));
+                    let id = self.context_create();
                     context.vals.insert(ident.clone(), id.to_string());
                 }
                 ExecOp::ContextCopy { id: ident, ident: name, val: value } => {
