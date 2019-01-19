@@ -1,7 +1,6 @@
 use rand::prelude::*;
 
 use std::collections::HashMap;
-use std::collections::VecDeque;
 
 use super::obj::*;
 use super::pubsub::*;
@@ -50,7 +49,7 @@ pub(crate) enum ThreadState {
     Exited(Result<(), ThreadError>),
 }
 
-struct DPU {
+pub struct DPU {
     commands: HashMap<CommandId, Command>,
     contexts: HashMap<ContextId, Context>,
     threads: HashMap<ThreadId, Thread>,
@@ -64,7 +63,7 @@ struct DPU {
 }
 
 #[derive(Debug, Clone)]
-enum ExecOp {
+pub enum ExecOp {
     ContextCreate { id: ContextIdent },
     ContextCopy { id: ContextIdent, ident: ContextIdent, val: ContextIdent },
     ContextSet { ident: ContextIdent, val: ContextValue },
@@ -124,7 +123,29 @@ impl Default for DPU {
 
 
 impl DPU {
-    pub fn put(&mut self) {}
+    pub fn put_thread(&mut self, ip: CommandId, ctx: ContextId) -> ThreadId {
+        let id = self.id_create();
+
+        let thread = Thread::create(id, ip, ctx);
+
+        self.threads.insert(id, thread);
+
+        self.proceed(&id);
+
+        id
+    }
+
+    pub fn put_context(&mut self, vals: Option<HashMap<ContextIdent, ContextValue>>) -> ContextId {
+        let id = self.id_create();
+        let vals = vals.unwrap_or_else(|| {
+            HashMap::<ContextIdent, ContextValue>::default()
+        });
+        let context = Context::create(id, vals);
+
+        self.contexts.insert(id, context);
+
+        id
+    }
 
     pub fn load(&mut self, commands: &Vec<Command>) {
         for command in commands {
@@ -141,13 +162,14 @@ impl DPU {
                 None => return
             };
 
-            dbg!(thread);
+            dbg!(&thread);
 
             let new_state: Option<ThreadState> = match &thread.state {
                 ThreadState::Created => {
                     Some(ThreadState::Fetching(thread.ip))
                 }
                 ThreadState::Done => {
+                    thread.step += 1;
                     Some(ThreadState::Fetching(thread.ip))
                 }
                 ThreadState::Fetching(ip) => {
@@ -246,8 +268,11 @@ impl DPU {
 
             if let Some(state) = new_state {
                 thread.state = state;
+            } else {
                 should_break = true;
             }
+
+            dbg!((&thread, should_break));
 
             self.threads.insert(id.clone(), thread);
 
@@ -257,8 +282,12 @@ impl DPU {
         }
     }
 
+    fn id_create(&mut self) -> u128{
+        self.rng.gen()
+    }
+
     fn context_create(&mut self) -> ContextId {
-        let id: u128 = self.rng.gen();
+        let id = self.id_create();
 
         self.contexts.insert(id, Context::empty(id));
 

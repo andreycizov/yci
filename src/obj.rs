@@ -10,7 +10,7 @@ pub(crate) type WorkerId = Id;
 pub(crate) type ContextIdent = String;
 pub(crate) type ContextValue = String;
 
-use uuid;
+//use uuid;
 
 
 
@@ -21,7 +21,7 @@ pub(crate) struct Worker {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct Context {
+pub struct Context {
     pub(crate) id: ContextId,
     pub(crate) vals: HashMap<ContextIdent, ContextValue>,
 }
@@ -36,14 +36,14 @@ impl Context {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct Command {
+pub struct Command {
     pub(crate) id: CommandId,
     pub(crate) opcode: CommandArgument,
     pub(crate) args: Vec<CommandArgument>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct InterpolatedCommand {
+pub struct InterpolatedCommand {
     pub(crate) id: CommandId,
     pub(crate) opcode: InterpolatedCommandArgument,
     pub(crate) args: Vec<InterpolatedCommandArgument>,
@@ -65,7 +65,7 @@ impl InterpolatedCommand {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum CommandArgument {
+pub enum CommandArgument {
     // value
     Const(ContextValue),
     // name of the ctx variable that has the value
@@ -74,7 +74,7 @@ pub(crate) enum CommandArgument {
 
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum InterpolatedCommandArgument {
+pub enum InterpolatedCommandArgument {
     Const(ContextValue),
     Ref(ContextIdent, ContextValue),
 }
