@@ -8,12 +8,12 @@ mod tests {
         dpu.load(
             &vec![
                 Command::create(
-                    0,
+                    "0".to_string(),
                     CommandArgument::Const("nop".to_string()),
                     vec![],
                 ),
                 Command::create(
-                    1,
+                    "1".to_string(),
                     CommandArgument::Const("ld".to_string()),
                     vec![
                         CommandArgument::Const("addr".to_string()),
@@ -21,7 +21,7 @@ mod tests {
                     ],
                 ),
                 Command::create(
-                    2,
+                    "2".to_string(),
                     CommandArgument::Const("jmp".to_string()),
                     vec![
                         CommandArgument::Ref("addr".to_string())
@@ -33,7 +33,7 @@ mod tests {
         let ctx = dpu.put_context(None);
 
         let thread = dpu.put_thread(
-            0,
+            "0".to_string(),
             ctx
         );
     }
@@ -43,12 +43,12 @@ mod tests {
         dpu.load(
             &vec![
                 Command::create(
-                    0,
+                    "0".to_string(),
                     CommandArgument::Ref("nop".to_string()),
                     vec![],
                 ),
                 Command::create(
-                    1,
+                    "1".to_string(),
                     CommandArgument::Const("ld".to_string()),
                     vec![
                         CommandArgument::Ref("addr".to_string()),
@@ -56,7 +56,7 @@ mod tests {
                     ],
                 ),
                 Command::create(
-                    2,
+                    "2".to_string(),
                     CommandArgument::Const("jmp".to_string()),
                     vec![
                         CommandArgument::Ref("addr".to_string())
@@ -68,7 +68,7 @@ mod tests {
         let ctx = dpu.put_context(None);
 
         let thread = dpu.put_thread(
-            0,
+            "0".to_string(),
             ctx
         );
     }

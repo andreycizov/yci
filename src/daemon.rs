@@ -149,7 +149,7 @@ impl DPU {
 
     pub fn load(&mut self, commands: &Vec<Command>) {
         for command in commands {
-            self.commands.insert(command.id, command.clone());
+            self.commands.insert(command.id.clone(), command.clone());
         }
     }
 
@@ -164,19 +164,19 @@ impl DPU {
 
             let new_state: Option<ThreadState> = match &thread.state {
                 ThreadState::Created => {
-                    Some(ThreadState::Fetching(thread.ip))
+                    Some(ThreadState::Fetching(thread.ip.clone()))
                 }
                 ThreadState::Done => {
                     thread.step += 1;
-                    Some(ThreadState::Fetching(thread.ip))
+                    Some(ThreadState::Fetching(thread.ip.clone()))
                 }
                 ThreadState::Fetching(ip) => {
-                    match self.commands.get(&ip) {
+                    match self.commands.get(ip) {
                         Some(x) => {
                             Some(ThreadState::Fetched(x.clone()))
                         }
                         None => {
-                            Some(ThreadState::Err(ThreadError::Fetch { id: *ip }))
+                            Some(ThreadState::Err(ThreadError::Fetch { id: ip.clone() }))
                         }
                     }
                 }
@@ -356,7 +356,7 @@ impl DPU {
                     let ip = context_get(&ip)?;
                     let ctx = context_get(&ip)?;
 
-                    let ip = parse_id(&ip, ExecErrReason::CommandRefInvalid { ident: ip.clone() })?;
+                    //let ip = parse_id(&ip, ExecErrReason::CommandRefInvalid { ident: ip.clone() })?;
                     let ctx = parse_id(&ctx, ExecErrReason::ContextRefInvalid { ident: ctx.clone() })?;
 
                     self.threads.insert(id, Thread::create(id, ip, ctx));

@@ -1,91 +1,68 @@
 extern crate nom;
 
 use nom::*;
-use nom::types::{CompleteStr, CompleteByteSlice};
 use std::str;
-
-//escaped![];
-
-named!(pub prefixed, preceded!(tag!("hello"), take!(5)));
+use super::super::obj::*;
 
 fn is_string(chr: u8) -> bool {
     is_alphanumeric(chr) || is_space(chr) || chr == b'_'
 }
 
 fn is_ident(chr: u8) -> bool {
-    is_alphanumeric(chr) || chr == b'_' //is_alphanumeric(chr) || chr == b'_'
+    is_alphanumeric(chr) || chr == b'_'
 }
 
-named!(
-  pub string<&str>,
 
-  delimited!(
-    complete!(char!('"')),
-    //map_res!(escaped!(call!(alphanumeric), '\\', is_a!("\"n\\")), str::from_utf8),
+pub fn string(input: &[u8]) -> IResult<&[u8], &str> {
+    delimited!(
+        input,
+        complete!(char!('\'')),
+        map_res!(
+          escaped!(take_while1!(is_string), '\\', one_of!("\"n\\")),
+          str::from_utf8
+        ),
+        complete!(char!('\''))
+    )
+}
+
+
+pub fn opt_multispace(input: &[u8]) -> IResult<&[u8], Option<&[u8]>> {
+    opt!(input, complete!(space1))
+}
+
+pub fn identifier(input: &[u8]) -> IResult<&[u8], &str> {
     map_res!(
-      escaped!(take_while1!(is_string), '\\', one_of!("\"n\\")),
-      str::from_utf8
-    ),
-    complete!(char!('"'))
-  )
-);
-
-
-fn check_ident(i: u8) -> Option<u8> {
-   if is_ident(i) {
-       Some(i)
-   } else {
-       None
-   }
-}
-
-
-named!(pub opt_multispace<&[u8], Option<&[u8]>>,
-       opt!(complete!(space1))
-);
-
-pub fn end_of_line(input: &[u8]) -> IResult<&[u8], &[u8]> {
-    alt!(input, eof!() | eol)
-}
-
-pub fn read_line(input: &[u8]) -> IResult<&[u8], &[u8]> {
-    terminated!(input, alphanumeric, peek!(end_of_line))
-}
-
-named!(
-    pub identifier<&str>,
-    map_res!(
+        input,
         alt_complete!(
             take_while1!(is_ident) |
-            read_line
+            terminated!(alphanumeric, peek!(alt!(eof!() | eol)))
         )
         ,
         str::from_utf8
     )
-);
+}
 
-named!(
-    pub coderef<&str>,
+pub fn coderef(input: &[u8]) -> IResult<&[u8], &str> {
     do_parse!(
+        input,
         complete!(tag!("@")) >>
         id: complete!(identifier) >>
         (id)
     )
-);
+}
 
-named!(
-    pub ctxref<&str>,
+pub fn ctxref(input: &[u8]) -> IResult<&[u8], &str> {
     do_parse!(
+        input,
         tag!("$") >>
         id: identifier >>
         (id)
     )
-);
+}
 
-
-named!(
-    pub label<&str>,
+pub fn label(input: &[u8]) -> IResult<&[u8], &str> {
     map_res!(
+        input,
         do_parse!(
             lbl: take_until1!(":") >>
             tag!(":") >>
@@ -93,65 +70,68 @@ named!(
         ),
         str::from_utf8
     )
-);
-
-use std;
-
-// this works but no EOF
-named!(
-    pub low_level_line<(&str, &str, std::vec::Vec<&str>)>,
-    do_parse!(
-        a: complete!(label) >>
-        opt_multispace >>
-        b: alt_complete!( string | ctxref )  >>
-        opt_multispace >>
-        c: separated_list_complete!( complete!(multispace), alt_complete!( string | ctxref ) )>>
-        opt_multispace >>
-        opt!(peek!(
-            line_ending
-        )) >>
-        (a, b, c)
-    )
-
-);
-
-named!(
-    pub low_level_line_b<(&str, &str)>,
-    ws!(
-        do_parse!(
-            a: label >>
-            c: ctxref >>
-
-            (a, c)
-        )
-    )
-);
-
-#[derive(Debug)]
-pub enum Line<'a>{
-    Line(&'a str, &'a str, std::vec::Vec<&'a str>),
-    Empty
 }
 
-named!(
-    pub low_level<std::vec::Vec<Line>>,
-    do_parse!(
-        mn: separated_list_complete!(
-            complete!(line_ending),
-            do_parse!(
-                a: alt_complete!(
-                    do_parse!(
-                        lll: low_level_line >>
-                        (Line::Line(lll.0, lll.1, lll.2))
-                    ) |
-                    do_parse!(
-                        opt_multispace >>
-                        (Line::Empty)
-                    )
-                ) >>
-                (a)
-            )
-        ) >>
-        (mn)
+pub fn param(input: &[u8]) -> IResult<&[u8], CommandArgument> {
+    alt_complete!( input,
+        string => { |x| CommandArgument::Const(ContextValue::from(x)) } |
+        ctxref => { |x| CommandArgument::Ref(ContextIdent::from(x)) }
     )
-);
+}
+
+pub fn ir_command(input: &[u8]) -> IResult<&[u8], IRLine> {
+    do_parse!(
+        input,
+        a: complete!(label) >>
+           opt_multispace >>
+        b: param  >>
+           opt_multispace >>
+        c: separated_list_complete!( complete!(multispace), param )>>
+           opt_multispace >>
+           line_ending >>
+            ( IRLine::Command(Command::create(CommandId::from(a), b, c)) )
+    )
+}
+
+pub fn ir_comment(input: &[u8]) -> IResult<&[u8], IRLine> {
+    do_parse!(
+        input,
+        a: map_res!(
+            do_parse!(
+                complete!( tag!("#") ) >>
+                a: take_until!( "\n" ) >>
+                ( a )
+            ),
+            str::from_utf8
+        ) >>
+        ( IRLine::Comment(String::from(a)) )
+    )
+}
+
+pub fn ir_empty(input: &[u8]) -> IResult<&[u8], IRLine> {
+    do_parse!(
+        input,
+        complete!(tag!("\n")) >>
+        ( IRLine::Empty )
+    )
+}
+
+pub fn ir_file(input: &[u8]) -> IResult<&[u8], Vec<IRLine>> {
+    complete!(
+        input,
+        many0!(
+            alt_complete! (
+                ir_command |
+                ir_comment |
+                ir_empty
+            )
+        )
+    )
+}
+
+#[derive(Debug)]
+pub enum IRLine {
+    Command(Command),
+    Comment(String),
+    Empty,
+}

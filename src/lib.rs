@@ -30,7 +30,7 @@ pub fn main() {
 
     let c = {
         let a = obj::Command::create(
-            2,
+            2.to_string(),
             obj::CommandArgument::Ref(y1.into()),
             vec![
                 obj::CommandArgument::Const(y2),

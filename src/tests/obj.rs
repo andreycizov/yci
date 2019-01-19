@@ -18,12 +18,12 @@ mod tests {
     fn test_opcode() {
         let ctx = create_context();
 
-        let cmd = Command::create(0, CommandArgument::Ref("b".to_string()), vec![]);
+        let cmd = Command::create("0".to_string(), CommandArgument::Ref("b".to_string()), vec![]);
 
         assert_eq!(
             cmd.interpolate(&ctx),
             Ok(InterpolatedCommand::create(
-                0,
+                "0".to_string(),
                 InterpolatedCommandArgument::Ref("b".into(), "1".into()),
                 vec![]
             ))
@@ -34,7 +34,7 @@ mod tests {
     fn test_opcode_err() {
         let ctx = create_context();
 
-        let cmd = Command::create(0, CommandArgument::Ref("g".to_string()), vec![]);
+        let cmd = Command::create("0".to_string(), CommandArgument::Ref("g".to_string()), vec![]);
 
         assert_eq!(
             cmd.interpolate(&ctx),

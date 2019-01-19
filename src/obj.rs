@@ -4,7 +4,7 @@ pub(crate) type Id = u128;
 pub(crate) type ThreadId = Id;
 pub(crate) type StepId = Id;
 pub(crate) type ContextId = Id;
-pub(crate) type CommandId = Id;
+pub(crate) type CommandId = String;
 pub(crate) type WorkerId = Id;
 
 pub(crate) type ContextIdent = String;
@@ -137,7 +137,7 @@ impl Command {
         };
 
         Ok(InterpolatedCommand {
-            id: self.id,
+            id: self.id.clone(),
             opcode: opcode?,
             args: a?,
         })
