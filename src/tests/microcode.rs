@@ -48,9 +48,9 @@ mod tests {
 
     #[test]
     fn test_microcode_one() {
-        dbg!(string(b"abcdef\n"));;
-        dbg!(ir_command(b"1:ld $a echo 2\r\n"));;
-        dbg!(ir_command(b"3: \'echo\' \'b\' \'3\'\n"));;
+        dbg!(string(b"abcdef\n"));
+        dbg!(ir_command(b"1:ld $a echo 2\r\n"));
+        dbg!(ir_command(b"3: \'echo\' \'b\' \'3\'\n"));
         dbg!(super::TEST_SIMPLE);
         let x = ir_file(super::TEST_SIMPLE.as_bytes()).unwrap();
         dbg!(str::from_utf8(x.0).unwrap());
@@ -72,6 +72,7 @@ mod tests {
 //        dbg!(low_level_line(b"1: \"asd\" $basd\n1: \"asd\" $basd\n"));
 //        dbg!(low_level_line(b"1: $asd $basd"));
 //        dbg!(low_level_line(b"1: \"asd\" $basd"));
+
     }
 
     #[test]

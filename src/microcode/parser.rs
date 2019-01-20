@@ -2,7 +2,6 @@ extern crate nom;
 
 use nom::*;
 use std::str;
-use super::super::obj::*;
 
 fn is_symbol(chr: u8) -> bool {
     (chr >= 32 && chr <= 47) ||
@@ -92,24 +91,22 @@ pub fn label(input: &[u8]) -> IResult<&[u8], &str> {
     )
 }
 
-pub fn param(input: &[u8]) -> IResult<&[u8], CommandArgument> {
+pub fn ir_arg(input: &[u8]) -> IResult<&[u8], IRArg> {
     alt_complete!( input,
-        string => { |x| CommandArgument::Const(ContextValue::from(x)) } |
-        ctxref => { |x| CommandArgument::Ref(ContextIdent::from(x)) }
+        string => { |x| IRArg::Const(String::from(x)) } |
+        ctxref => { |x| IRArg::Ref(String::from(x)) }
     )
 }
 
-pub fn ir_command(input: &[u8]) -> IResult<&[u8], Command> {
+pub fn ir_command(input: &[u8]) -> IResult<&[u8], (String, Vec<IRArg>)> {
     do_parse!(
         input,
-        a: complete!(label) >>
+        label: complete!(label) >>
            opt_multispace >>
-        b: param  >>
-           opt_multispace >>
-        c: separated_list_complete!( complete!(opt_multispace), param )>>
+        args: separated_list_complete!( complete!(opt_multispace), ir_arg )>>
            opt_multispace >>
            line_ending >>
-            ( Command::create(CommandId::from(a), b, c) )
+            ( (label.to_string(), args) )
     )
 }
 
@@ -135,6 +132,7 @@ pub fn ir_comment(input: &[u8]) -> IResult<&[u8], String> {
 pub fn ir_empty(input: &[u8]) -> IResult<&[u8], ()> {
     do_parse!(
         input,
+        opt_multispace >>
         line_ending >>
         ( () )
     )
@@ -147,15 +145,25 @@ pub fn ir_file(input: &[u8]) -> IResult<&[u8], Vec<IRLine>> {
             alt_complete!(
                 ir_comment => { |x| IRLine::Comment(x) } |
                 ir_empty => { |_| IRLine::Empty } |
-                ir_command => { |x| IRLine::Command(x) }
+                ir_command => { |x| {
+                        let (label, args) = x;
+                        IRLine::Command(label, args)
+                    }
+                }
             )
         )
     )
 }
 
 #[derive(Debug)]
+pub enum IRArg {
+    Const(String),
+    Ref(String),
+}
+
+#[derive(Debug)]
 pub enum IRLine {
-    Command(Command),
+    Command(String, Vec<IRArg>),
     Comment(String),
     Empty,
 }
