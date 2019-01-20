@@ -1,0 +1,15 @@
+# first line
+# second line
+1:ld $a echo 2
+# third line
+2: 'asd'
+
+
+4: 'asd'
+# third line
+
+5: 'echo' 'b' '3'
+# fourth line
+
+6:'ld' $a 'echo' '2'
+7:'ld' $a 'echo' '2'

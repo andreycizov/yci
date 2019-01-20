@@ -26,9 +26,9 @@ fn is_not_eol(chr: u8) -> bool {
     chr == b'\n'
 }
 
-type RawInput<'a> = &'a [u8];
-type Input<'a> = LocatedSpan<RawInput<'a>>;
-type StrOutput<'a> = LocatedSpan<&'a str>;
+pub type RawInput<'a> = &'a [u8];
+pub type Input<'a> = LocatedSpan<RawInput<'a>>;
+pub type StrOutput<'a> = LocatedSpan<&'a str>;
 
 pub fn quoted_string(input: Input) -> IResult<Input, StrOutput> {
     delimited!(
@@ -93,7 +93,7 @@ pub fn ctxref(input: Input) -> IResult<Input, StrOutput> {
 //    }
 //}
 
-fn located_span_from<T, R>(x: LocatedSpan<T>, b: R) -> LocatedSpan<R>
+pub fn located_span_from<T, R>(x: LocatedSpan<T>, b: R) -> LocatedSpan<R>
 {
     LocatedSpan {
         line: x.line,
@@ -102,7 +102,7 @@ fn located_span_from<T, R>(x: LocatedSpan<T>, b: R) -> LocatedSpan<R>
     }
 }
 
-fn located_span_map<T, F, R>(x: LocatedSpan<T>, b: F) -> LocatedSpan<R>
+pub fn located_span_map<T, F, R>(x: LocatedSpan<T>, b: F) -> LocatedSpan<R>
     where F: Fn(T) -> R
 {
     LocatedSpan {
@@ -112,7 +112,7 @@ fn located_span_map<T, F, R>(x: LocatedSpan<T>, b: F) -> LocatedSpan<R>
     }
 }
 
-fn located_span_map_res<I, O, E, Fun>(x: LocatedSpan<I>, b: Fun) -> Result<LocatedSpan<O>, E>
+pub fn located_span_map_res<I, O, E, Fun>(x: LocatedSpan<I>, b: Fun) -> Result<LocatedSpan<O>, E>
     where Fun: Fn(I) -> Result<O, E>
 {
     Ok(LocatedSpan {
@@ -122,7 +122,7 @@ fn located_span_map_res<I, O, E, Fun>(x: LocatedSpan<I>, b: Fun) -> Result<Locat
     })
 }
 
-fn located_span_copy<T, A>(x: LocatedSpan<T>, val: LocatedSpan<A>) -> LocatedSpan<A> {
+pub fn located_span_copy<T, A>(x: LocatedSpan<T>, val: LocatedSpan<A>) -> LocatedSpan<A> {
     LocatedSpan {
         line: x.line,
         offset: x.offset,
@@ -216,14 +216,24 @@ pub fn ir_input(input: &str) -> Input {
 
 #[derive(Debug, Clone, Copy)]
 pub struct Location {
-    offset: usize,
-    line: u32,
+    pub offset: usize,
+    pub line: u32,
+}
+
+impl Location {
+    pub fn new(offset: usize, line: u32) -> Self {
+        Location { offset, line }
+    }
+
+    pub fn from_span<T>(span: &LocatedSpan<T>) -> Self {
+        Location { offset: span.offset, line: span.line }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct Located<T> {
-    location: Location,
-    item: T,
+    pub location: Location,
+    pub item: T,
 }
 
 impl <T>Located<T> {
@@ -266,4 +276,4 @@ pub enum IRLine {
     Empty,
 }
 
-type IRFile = Vec<Located<IRLine>>;
+pub type IRFile = Vec<Located<IRLine>>;

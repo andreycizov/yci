@@ -1,0 +1,21 @@
+# [http_hdlr_root]
+01: list_create $users 02
+02: db_user_list $users 03
+03: list_length $users $cnt 04
+04: set $i 0 05
+05: cmp $i '<' $cnt $check 06
+06: if $check 07 10
+07: list_get $users $i $user_id 08
+08: db_user_activate $user_id 09
+09: add $i 1 05
+10: usr_op_x 11
+# should we actually file a new thread here ?
+# and set a timer
+# then if the timer is done, then the worker had timed out
+# and we can kill the replier thread.
+11: http_rep 200 OK $req_handle
+
+
+# [http_hdlr_rep]
+50: http_load_handler $req_handle $srvr_queue 51
+51: $srvr_queue
