@@ -25,7 +25,9 @@ fn is_not_eol(chr: u8) -> bool {
     chr == b'\n'
 }
 
-pub fn quoted_string(input: &[u8]) -> IResult<&[u8], &str> {
+type Input<'a> = &'a [u8];
+
+pub fn quoted_string(input: Input) -> IResult<Input, &str> {
     delimited!(
         input,
         complete!(char!('\'')),
@@ -37,7 +39,7 @@ pub fn quoted_string(input: &[u8]) -> IResult<&[u8], &str> {
     )
 }
 
-pub fn string(input: &[u8]) -> IResult<&[u8], &str> {
+pub fn string(input: Input) -> IResult<Input, &str> {
     alt_complete!(
         input,
         quoted_string |
@@ -46,11 +48,11 @@ pub fn string(input: &[u8]) -> IResult<&[u8], &str> {
 }
 
 
-pub fn opt_multispace(input: &[u8]) -> IResult<&[u8], Option<&[u8]>> {
+pub fn opt_multispace(input: Input) -> IResult<Input, Option<Input>> {
     opt!(input, complete!(space1))
 }
 
-pub fn identifier(input: &[u8]) -> IResult<&[u8], &str> {
+pub fn identifier(input: Input) -> IResult<Input, &str> {
     map_res!(
         input,
         alt_complete!(
@@ -61,7 +63,7 @@ pub fn identifier(input: &[u8]) -> IResult<&[u8], &str> {
     )
 }
 
-pub fn coderef(input: &[u8]) -> IResult<&[u8], &str> {
+pub fn coderef(input: Input) -> IResult<Input, &str> {
     do_parse!(
         input,
         complete!(tag!("@")) >>
@@ -70,7 +72,7 @@ pub fn coderef(input: &[u8]) -> IResult<&[u8], &str> {
     )
 }
 
-pub fn ctxref(input: &[u8]) -> IResult<&[u8], &str> {
+pub fn ctxref(input: Input) -> IResult<Input, &str> {
     do_parse!(
         input,
         tag!("$") >>
@@ -79,7 +81,7 @@ pub fn ctxref(input: &[u8]) -> IResult<&[u8], &str> {
     )
 }
 
-pub fn label(input: &[u8]) -> IResult<&[u8], &str> {
+pub fn label(input: Input) -> IResult<Input, &str> {
     map_res!(
         input,
         do_parse!(
@@ -91,14 +93,14 @@ pub fn label(input: &[u8]) -> IResult<&[u8], &str> {
     )
 }
 
-pub fn ir_arg(input: &[u8]) -> IResult<&[u8], IRArg> {
+pub fn ir_arg(input: Input) -> IResult<Input, IRArg> {
     alt_complete!( input,
         string => { |x| IRArg::Const(String::from(x)) } |
         ctxref => { |x| IRArg::Ref(String::from(x)) }
     )
 }
 
-pub fn ir_command(input: &[u8]) -> IResult<&[u8], (String, Vec<IRArg>)> {
+pub fn ir_command(input: Input) -> IResult<Input, (String, Vec<IRArg>)> {
     do_parse!(
         input,
         label: complete!(label) >>
@@ -110,7 +112,7 @@ pub fn ir_command(input: &[u8]) -> IResult<&[u8], (String, Vec<IRArg>)> {
     )
 }
 
-pub fn ir_comment(input: &[u8]) -> IResult<&[u8], String> {
+pub fn ir_comment(input: Input) -> IResult<Input, String> {
     do_parse!(
         input,
         a: map_res!(
@@ -129,7 +131,7 @@ pub fn ir_comment(input: &[u8]) -> IResult<&[u8], String> {
     )
 }
 
-pub fn ir_empty(input: &[u8]) -> IResult<&[u8], ()> {
+pub fn ir_empty(input: Input) -> IResult<Input, ()> {
     do_parse!(
         input,
         opt_multispace >>
@@ -138,7 +140,7 @@ pub fn ir_empty(input: &[u8]) -> IResult<&[u8], ()> {
     )
 }
 
-pub fn ir_file(input: &[u8]) -> IResult<&[u8], Vec<IRLine>> {
+pub fn ir_file(input: Input) -> IResult<Input, Vec<IRLine>> {
     complete!(
         input,
         many0!(
