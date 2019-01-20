@@ -48,12 +48,12 @@ mod tests {
 
     #[test]
     fn test_microcode_one() {
-        dbg!(string(b"abcdef\n"));
-        dbg!(ir_command(b"1:ld $a echo 2\r\n"));
-        dbg!(ir_command(b"3: \'echo\' \'b\' \'3\'\n"));
+        dbg!(string(ir_input("abcdef\n")));
+        dbg!(ir_command(ir_input("1:ld $a echo 2\r\n")));
+        dbg!(ir_command(ir_input("3: \'echo\' \'b\' \'3\'\n")));
         dbg!(super::TEST_SIMPLE);
-        let x = ir_file(super::TEST_SIMPLE.as_bytes()).unwrap();
-        dbg!(str::from_utf8(x.0).unwrap());
+        let x = ir_file(ir_input(super::TEST_SIMPLE)).unwrap();
+        dbg!(str::from_utf8(x.0.fragment).unwrap());
         dbg!(x.1);
 //        dbg!(prefixed(b"hello     "));
 //        dbg!(string(b"\"beauty\\\"sad\""));
@@ -77,7 +77,7 @@ mod tests {
 
     #[test]
     fn test_microcode_algo() {
-        let x = ir_file(super::TEST_ALGO.as_bytes()).unwrap();
+        let x = ir_file(ir_input(super::TEST_ALGO)).unwrap();
         dbg!(x.1);
     }
 }
