@@ -4,7 +4,7 @@ extern crate rand;
 use std::collections::HashMap;
 
 pub mod obj;
-pub mod microcode;
+pub mod prog;
 pub mod daemon;
 pub mod pubsub;
 

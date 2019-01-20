@@ -43,7 +43,7 @@ static TEST_ALGO: &str = "
 
 #[cfg(test)]
 mod tests {
-    use crate::microcode::*;
+    use crate::prog::*;
     use std::str;
 
     #[test]

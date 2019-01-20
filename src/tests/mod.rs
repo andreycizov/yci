@@ -1,4 +1,4 @@
 mod obj;
-mod microcode;
+mod prog;
 mod pubsub;
 mod daemon;
