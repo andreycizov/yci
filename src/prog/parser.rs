@@ -193,7 +193,7 @@ pub fn ir_empty(input: Input) -> IResult<Input, LocatedSpan<&str>> {
     )
 }
 
-pub fn ir_file(input: Input) -> IResult<Input, Vec<Located<IRLine>>> {
+pub fn ir_file(input: Input) -> IResult<Input, IRFile> {
     complete!(
         input,
         many0!(
@@ -265,3 +265,5 @@ pub enum IRLine {
     Comment(String),
     Empty,
 }
+
+type IRFile = Vec<Located<IRLine>>;
