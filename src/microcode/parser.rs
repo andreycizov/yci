@@ -150,7 +150,7 @@ pub fn ir_arg(input: Input) -> IResult<Input, Located<IRArg>> {
     )
 }
 
-pub fn ir_command(input: Input) -> IResult<Input, LocatedSpan<(String, Vec<Located<IRArg>>)>> {
+pub fn ir_command(input: Input) -> IResult<Input, LocatedSpan<(Located<String>, Vec<Located<IRArg>>)>> {
     do_parse!(
         input,
         pos: position!() >>
@@ -159,7 +159,7 @@ pub fn ir_command(input: Input) -> IResult<Input, LocatedSpan<(String, Vec<Locat
         args: separated_list_complete!( complete!(opt_multispace), ir_arg )>>
            opt_multispace >>
            line_ending >>
-            ( located_span_from( pos, (label.to_string(), args) ) )
+            ( located_span_from( pos, (Located::from_span(label).map(|x| x.to_string()), args) ) )
     )
 }
 
@@ -261,7 +261,7 @@ pub enum IRArg {
 
 #[derive(Debug)]
 pub enum IRLine {
-    Command(String, Vec<Located<IRArg>>),
+    Command(Located<String>, Vec<Located<IRArg>>),
     Comment(String),
     Empty,
 }
