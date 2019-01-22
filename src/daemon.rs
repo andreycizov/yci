@@ -69,6 +69,13 @@ impl State {
     pub fn insert_context(&mut self, context: &Context) {
         self.contexts.insert(context.id.clone(), context.clone());
     }
+    
+    pub fn insert_commands<'a, I>(&mut self, commands: I)
+        where I: Iterator<Item=&'a Command>, {
+        for command in commands {
+            self.commands.insert(command.id.clone(), command.clone());
+        }
+    }
 }
 
 impl Default for State {
@@ -99,10 +106,10 @@ impl RValueLocal {
     pub fn resolve(
         &self,
         locals: &HashMap<ContextIdent, ContextValue>,
-    ) -> Result<ContextValue, ExecErrReason> {
+    ) -> Result<ContextValue, OpErrReason> {
         match self {
             RValueLocal::Const(val) => Ok(val.clone()),
-            RValueLocal::Ref(ident) => Err(ExecErrReason::LocalRefInvalid { ident: ident.clone() })
+            RValueLocal::Ref(ident) => Err(OpErrReason::LocalRefInvalid { ident: ident.clone() })
         }
     }
 }
@@ -118,7 +125,7 @@ impl RValueExtern {
         &self,
         locals: &HashMap<ContextIdent, ContextValue>,
         state: &mut State,
-    ) -> Result<ContextValue, ExecErrReason> {
+    ) -> Result<ContextValue, OpErrReason> {
         match self {
             RValueExtern::ContextCreate => {
                 let id: ContextId = state.create_id().to_string();
@@ -153,7 +160,7 @@ impl RValue {
         &self,
         locals: &HashMap<ContextIdent, ContextValue>,
         state: &mut State,
-    ) -> Result<ContextValue, ExecErrReason> {
+    ) -> Result<ContextValue, OpErrReason> {
         match self {
             RValue::Local(x) => x.resolve(locals),
             RValue::Extern(x) => x.resolve(locals, state),
@@ -170,13 +177,10 @@ pub enum Op {
     ContextRemove(RValueLocal),
     
     ThreadRemove(RValueLocal),
-    
-    ThreadContextSet(RValueLocal),
-    ThredNipSet(RValueLocal),
 }
 
 #[derive(Debug, Clone)]
-pub enum ExecErrReason {
+pub enum OpErrReason {
     ContextDoesNotExist { id: ContextId },
     ThreadDoesNotExist { id: ThreadId },
     LocalRefInvalid { ident: ContextIdent },
@@ -188,17 +192,12 @@ pub enum ExecErrReason {
 }
 
 #[derive(Debug, Clone)]
-pub struct ExecErr {
+pub struct OpErr {
     op_index: Option<usize>,
-    op_reason: ExecErrReason,
+    op_reason: OpErrReason,
 }
 
-pub type WorkerExec<'a> = Result<&'a Vec<Op>, ExecErrReason>;
-
-//pub enum WorkerExec {
-//    // what worker returns when executed.
-//
-//}
+pub type WorkerExec<'a> = Result<&'a Vec<Op>, OpErrReason>;
 
 impl Thread {
     pub fn create(id: ThreadId, ip: CommandId, ctx: Option<ContextId>) -> Self {
@@ -217,9 +216,6 @@ impl Default for DPU {
     fn default() -> Self {
         DPU {
             state: State::default(),
-            
-            //queues: HashMap::<ContextValue, VecDeque<ThreadId>>::default(),
-            
             multi_queue: MultiQueue::<WorkerId, ContextValue, ThreadId>::default(),
             workers: HashMap::<WorkerId, Worker>::default(),
         }
@@ -227,15 +223,13 @@ impl Default for DPU {
 }
 
 
+static LOCAL_NIP: &str = "$nip";
+static LOCAL_EIP: &str = "eip";
+static LOCAL_CTX: &str = "ctx";
+
 impl DPU {
     pub fn get_state_mut(&mut self) -> &mut State {
         &mut self.state
-    }
-    
-    pub fn load(&mut self, commands: &Vec<Command>) {
-        for command in commands {
-            self.state.commands.insert(command.id.clone(), command.clone());
-        }
     }
     
     fn proceed(&mut self, id: &ThreadId) {
@@ -299,6 +293,7 @@ impl DPU {
                     None
                 }
                 ThreadState::Assigned(command, worker_id) => {
+                    // todo notify the relevant worker_id
                     None
                 }
                 ThreadState::Paused => {
@@ -371,11 +366,15 @@ impl DPU {
         thread: &mut Thread,
         state: &mut State,
         ops: &Vec<Op>,
-    ) -> Result<(), ExecErr> {
+    ) -> Result<(), OpErr> {
         let mut locals = HashMap::<ContextIdent, ContextValue>::default();
         
+        locals.insert(LOCAL_NIP.to_string(), thread.ip.clone());
+        locals.insert(LOCAL_EIP.to_string(), thread.eip.clone().unwrap_or("".to_string()));
+        locals.insert(LOCAL_CTX.to_string(), thread.ctx.clone().unwrap_or("".to_string()));
+        
         for (op_index, op) in ops.iter().enumerate() {
-            let map_err_fn = |op_reason| ExecErr { op_index: Some(op_index), op_reason };
+            let map_err_fn = |op_reason| OpErr { op_index: Some(op_index), op_reason };
             
             match op {
                 Op::ValueSet(loc_ident, rval) => {
@@ -390,96 +389,54 @@ impl DPU {
                         rval.resolve(&locals).map_err(map_err_fn)?,
                     );
                 }
-                _ => { panic!("Must handle all") }
+                Op::ContextCopy(ctx_ident, ctx_val_ident, rval) => {
+                    let ctx_ident = ctx_ident.resolve(&locals).map_err(map_err_fn)?;
+                    let ctx_val_ident = ctx_val_ident.resolve(&locals).map_err(map_err_fn)?;
+                    let rval = rval.resolve(&locals).map_err(map_err_fn)?;
+                    
+                    match state.contexts.get_mut(&ctx_ident) {
+                        Some(context) => context.vals.insert(ctx_val_ident, rval),
+                        None => {
+                            return Err(map_err_fn(OpErrReason::ContextRefInvalid { ident: ctx_ident }));
+                        }
+                    };
+                }
+                Op::ContextRemove(rval) => {
+                    let rval = rval.resolve(&locals).map_err(map_err_fn)?;
+                    
+                    match state.contexts.remove(&rval) {
+                        Some(_) => {}
+                        None => {
+                            return Err(map_err_fn(OpErrReason::ContextDoesNotExist { id: rval }));
+                        }
+                    };
+                }
+                
+                Op::ThreadRemove(rval) => {
+                    let rval = rval.resolve(&locals).map_err(map_err_fn)?;
+                    
+                    match state.threads.remove(&rval) {
+                        Some(_) => {}
+                        None => {
+                            return Err(map_err_fn(OpErrReason::ThreadDoesNotExist { id: rval }));
+                        }
+                    };
+                }
             }
         }
-
-//        let a = {
-//            match op {
-//                Ops::ContextCreate { id: ident } => {
-//                    let id = self.context_create();
-//                    context.vals.insert(ident.clone(), id.to_string());
-//                }
-//                Ops::ContextCopy { id: ident, ident: name, val: value } => {
-//                    let ident = context_get(&ident)?;
-//                    let value = context_get(&value)?;
-//
-//                    let ident_int = parse_id(&ident, ExecErrReason::ContextRefInvalid { ident: ident.clone() })?;
-//
-//                    if let Some(x) = self.contexts.get_mut(&ident_int) {
-//                        x.vals.insert(name.clone(), value);
-//                    } else {
-//                        return context_err(i, ExecErrReason::ContextDoesNotExist { id: ident_int })
-//                    };
-//
-//                }
-//                Ops::ContextSet { ident, val } => {
-//                    context.vals.insert(ident.clone(), val.clone());
-//                }
-//                Ops::ContextRemove { id: ident } => {
-//                    let ident = parse_id(&context_get(ident)?, ExecErrReason::ContextRefInvalid { ident: ident.clone() })?;
-//
-//                    match self.contexts.remove(&ident) {
-//                        Some(_) => {}
-//                        None => return context_err(i, ExecErrReason::ContextDoesNotExist { id: ident.clone() })
-//                    }
-//                }
-//                Ops::ThreadCreate { id, ip, ctx } => {
-//                    let id: u128 = self.rng.gen();
-//
-//                    let ip = context_get(&ip)?;
-//                    let ctx = context_get(&ip)?;
-//
-//                    //let ip = parse_id(&ip, ExecErrReason::CommandRefInvalid { ident: ip.clone() })?;
-//                    let ctx = parse_id(&ctx, ExecErrReason::ContextRefInvalid { ident: ctx.clone() })?;
-//
-//                    self.threads.insert(id, Thread::create(id, ip, Some(ctx)));
-//                }
-//                Ops::ThreadRemove { id: ident } => {
-//                    let ident = parse_id(&context_get(ident)?, ExecErrReason::ThreadRefInvalid { ident: ident.clone() })?;
-//
-//                    match self.contexts.remove(&ident) {
-//                        Some(_) => {}
-//                        None => return context_err(i, ExecErrReason::ThreadDoesNotExist { id: ident.clone() })
-//                    }
-//                }
-//                Ops::SetNIP { id } => {
-//                    thread.ip = id.clone()
-//                }
-//                Ops::SetContext { id } => {
-//                    thread.ctx = id.clone()
-//                }
-//                //_ => return context_err(i, ExecErrReason::UnknownOp)
-//            }
-//        }
+        
+        thread.ip = locals.get(&LOCAL_NIP.to_string()).unwrap().clone();
+        thread.eip = match locals.get(&LOCAL_EIP.to_string()).unwrap().as_ref() {
+            "" => None,
+            x => Some(x.to_string())
+        };
+        thread.ctx = match locals.get(&LOCAL_CTX.to_string()).unwrap().as_ref() {
+            "" => None,
+            x => Some(x.to_string())
+        };
         
         thread.step.wrapping_add(1);
-
-//        let thread_id = thread.id.clone();
-//
-//        self.threads.insert(thread.id, thread);
-//        self.contexts.insert(context.id, context);
-//
-//        self.proceed(&thread_id);
         
         Ok(())
-    }
-    
-    pub fn done(&mut self, id: &ThreadId, step: StepId, ops: &Vec<Op>) -> Result<(), ExecErr> {
-        if let Some(x) = self.state.threads.get(id) {
-            if x.step == step {
-                let mut thread = x.clone();
-                
-                let ret = DPU::exec(&mut thread, &mut self.state, ops)?;
-                
-                self.state.threads.insert(id.clone(), thread);
-                
-                return Ok(ret);
-            } else {
-                return Err(ExecErr { op_index: None, op_reason: ExecErrReason::PostStepped { current: x.step, selected: step } });
-            }
-        } else {
-            return Err(ExecErr { op_index: None, op_reason: ExecErrReason::ThreadDoesNotExist { id: id.clone() } });
-        };
     }
 }
