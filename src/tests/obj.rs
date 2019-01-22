@@ -21,7 +21,7 @@ mod tests {
         let cmd = Command::create("0".to_string(), CommandArgument::Ref("b".to_string()), vec![]);
 
         assert_eq!(
-            cmd.interpolate(&ctx),
+            cmd.interpolate(Some(&ctx)),
             Ok(InterpolatedCommand::create(
                 "0".to_string(),
                 InterpolatedCommandArgument::Ref("b".into(), "1".into()),
@@ -37,8 +37,8 @@ mod tests {
         let cmd = Command::create("0".to_string(), CommandArgument::Ref("g".to_string()), vec![]);
 
         assert_eq!(
-            cmd.interpolate(&ctx),
-            Err("g".into())
+            cmd.interpolate(Some(&ctx)),
+            Err(InterpolationError::Ref("g".into()))
         )
     }
 }

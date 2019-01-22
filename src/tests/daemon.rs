@@ -34,7 +34,7 @@ mod tests {
 
         let thread = dpu.put_thread(
             "0".to_string(),
-            ctx
+            Some(ctx)
         );
     }
 
@@ -69,7 +69,7 @@ mod tests {
 
         let thread = dpu.put_thread(
             "0".to_string(),
-            ctx
+            Some(ctx)
         );
     }
 

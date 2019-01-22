@@ -45,7 +45,7 @@ pub fn main() {
         values.insert(x04, x14);
 
         let b = obj::Context::create(3, values);
-        a.interpolate(&b)
+        a.interpolate(Some(&b))
     };
 
 

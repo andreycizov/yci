@@ -14,7 +14,7 @@ pub(crate) struct Thread {
     // Instruction pointer
     pub(crate) ip: CommandId,
     // Context pointer
-    pub(crate) ctx: ContextId,
+    pub(crate) ctx: Option<ContextId>,
     //
     pub(crate) state: ThreadState,
 
@@ -26,8 +26,8 @@ pub(crate) struct Thread {
 #[derive(Debug, Clone)]
 pub enum ThreadError {
     Fetch { id: CommandId },
-    Context { id: ContextId },
-    Interpolate { err: String },
+    Context { id: Option<ContextId> },
+    Interpolate { err: InterpolationError },
 }
 
 #[derive(Debug, Clone)]
@@ -63,15 +63,37 @@ pub struct DPU {
 }
 
 #[derive(Debug, Clone)]
+pub enum ROp {
+    ContextCreate,
+    ThreadCreate,
+    Ref(ContextIdent),
+    Const(ContextValue),
+}
+
+#[derive(Debug, Clone)]
+pub enum ExecOp2 {
+    ValueSet(ContextIdent, ROp),
+    ContextSet(ContextIdent, ROp),
+
+    ContextCopy(ROp, ROp, ROp),
+    ContextRemove(ROp),
+
+    ThreadRemove(ROp),
+
+    ThreadContextSet(ROp),
+    ThredNipSet(ROp),
+}
+
+#[derive(Debug, Clone)]
 pub enum ExecOp {
-    ContextCreate { id: ContextIdent },
+    ContextCreate { id: ContextIdent }, //
     ContextCopy { id: ContextIdent, ident: ContextIdent, val: ContextIdent },
-    ContextSet { ident: ContextIdent, val: ContextValue },
+    ContextSet { ident: ContextIdent, val: ContextValue }, //
     ContextRemove { id: ContextIdent },
     ThreadCreate { id: ContextIdent, ip: ContextIdent, ctx: ContextIdent },
     ThreadRemove { id: ContextIdent },
     SetNIP { id: CommandId },
-    SetContext { id: ContextId },
+    SetContext { id: Option<ContextId> },
 }
 
 #[derive(Debug, Clone)]
@@ -91,8 +113,13 @@ pub struct ExecErr {
     op_reason: ExecErrReason,
 }
 
+pub enum WorkerExec {
+    // what worker returns when executed.
+
+}
+
 impl Thread {
-    pub fn create(id: ThreadId, ip: CommandId, ctx: ContextId) -> Self {
+    pub fn create(id: ThreadId, ip: CommandId, ctx: Option<ContextId>) -> Self {
         Thread {
             id: id,
             step: 0,
@@ -123,7 +150,7 @@ impl Default for DPU {
 
 
 impl DPU {
-    pub fn put_thread(&mut self, ip: CommandId, ctx: ContextId) -> ThreadId {
+    pub fn put_thread(&mut self, ip: CommandId, ctx: Option<ContextId>) -> ThreadId {
         let id = self.id_create();
 
         let thread = Thread::create(id, ip, ctx);
@@ -184,19 +211,25 @@ impl DPU {
                     Some(ThreadState::Interpolating(command.clone()))
                 }
                 ThreadState::Interpolating(command) => {
-                    match self.contexts.get(&thread.ctx) {
-                        Some(ctx) => {
-                            match command.interpolate(ctx) {
-                                Ok(x) => {
-                                    Some(ThreadState::Interpolated(x))
+                    let mut ctx: Option<&Context> = None;
+
+                    if let Some(x) = &thread.ctx {
+                            match self.contexts.get(x) {
+                                Some(fetched_ctx) => {
+                                    ctx = Some(fetched_ctx);
                                 }
-                                Err(x) => {
-                                    Some(ThreadState::Err(ThreadError::Interpolate { err: x }))
+                                None => {
+                                    Some(ThreadState::Err(ThreadError::Context { id: thread.ctx.clone() }))
                                 }
                             }
+                    }
+
+                    match command.interpolate(ctx) {
+                        Ok(x) => {
+                            Some(ThreadState::Interpolated(x))
                         }
-                        None => {
-                            Some(ThreadState::Err(ThreadError::Context { id: thread.ctx.clone() }))
+                        Err(x) => {
+                            Some(ThreadState::Err(ThreadError::Interpolate { err: x }))
                         }
                     }
                 }
@@ -324,6 +357,18 @@ impl DPU {
 
 
             match op {
+                // TODO: /////////////////////////////////////////////
+                // can we only allow the contexts to be created in a certain way?
+                // e.g. by copying the context from A -> B but not otherwise
+                // [if that is the case, then we will be unable to write proper algorithms]
+                // [with
+
+                // the issue is that all of these operations are defined against the context and do not support
+                // contextless operation (Excluding SetNIP, SetContext)
+                // thus, we can not create a context without having a thread context
+                // todo: /////////////////////////////////////////////
+
+
                 ExecOp::ContextCreate { id: ident } => {
                     let id = self.context_create();
                     context.vals.insert(ident.clone(), id.to_string());
@@ -334,10 +379,12 @@ impl DPU {
 
                     let ident_int = parse_id(&ident, ExecErrReason::ContextRefInvalid { ident: ident.clone() })?;
 
-                    match self.contexts.get_mut(&ident_int) {
-                        Some(x) => x.vals.insert(name.clone(), value),
-                        None => return context_err(i, ExecErrReason::ContextDoesNotExist { id: ident_int })
+                    if let Some(x) = self.contexts.get_mut(&ident_int) {
+                        x.vals.insert(name.clone(), value);
+                    } else {
+                        return context_err(i, ExecErrReason::ContextDoesNotExist { id: ident_int })
                     };
+
                 }
                 ExecOp::ContextSet { ident, val } => {
                     context.vals.insert(ident.clone(), val.clone());
@@ -359,7 +406,7 @@ impl DPU {
                     //let ip = parse_id(&ip, ExecErrReason::CommandRefInvalid { ident: ip.clone() })?;
                     let ctx = parse_id(&ctx, ExecErrReason::ContextRefInvalid { ident: ctx.clone() })?;
 
-                    self.threads.insert(id, Thread::create(id, ip, ctx));
+                    self.threads.insert(id, Thread::create(id, ip, Some(ctx)));
                 }
                 ExecOp::ThreadRemove { id: ident } => {
                     let ident = parse_id(&context_get(ident)?, ExecErrReason::ThreadRefInvalid { ident: ident.clone() })?;
