@@ -7,7 +7,7 @@ mod tests {
     fn test_worker_first() {
         let mut a = PubSub::<u32, u32, u32>::default();
 
-        a.add(1000, 5, &vec![100, 200, 300]);
+        a.add(1000, Some(5), &vec![100, 200, 300]);
 
         assert_eq!(
             a.assign(&400, &50),
@@ -28,7 +28,7 @@ mod tests {
             None
         );
 
-        a.add(1000, 0, &vec![100, 200, 300]);
+        a.add(1000, Some(0), &vec![100, 200, 300]);
 
         assert_eq!(
             a.assign(&400, &50),
@@ -56,7 +56,7 @@ mod tests {
             vec![],
         );
 
-        let ops2 = a.worker_add("a".to_string(), 2, vec![1, 2, 3]);
+        let ops2 = a.worker_add("a".to_string(), Some(2), vec![1, 2, 3]);
 
         assert_eq!(
             ops2,
@@ -82,7 +82,7 @@ mod tests {
             vec![],
         );
 
-        let ops2 = a.worker_add("a".to_string(), 2, vec![1, 2, 3]);
+        let ops2 = a.worker_add("a".to_string(), Some(2), vec![1, 2, 3]);
 
         assert_eq!(
             ops2,
@@ -118,7 +118,7 @@ mod tests {
             vec![],
         );
 
-        let ops2 = a.worker_add("a".to_string(), 2, vec![1, 2, 3]);
+        let ops2 = a.worker_add("a".to_string(), Some(2), vec![1, 2, 3]);
 
         assert_eq!(
             ops2,
@@ -154,7 +154,7 @@ mod tests {
             vec![],
         );
 
-        let ops2 = a.worker_add("a".to_string(), 2, vec![1, 2, 3]);
+        let ops2 = a.worker_add("a".to_string(), Some(2), vec![1, 2, 3]);
 
         assert_eq!(
             ops2,
@@ -207,7 +207,7 @@ mod tests {
             vec![],
         );
 
-        let ops2 = a.worker_add("a".to_string(), 2, vec![1, 2, 3]);
+        let ops2 = a.worker_add("a".to_string(), Some(2), vec![1, 2, 3]);
 
         assert_eq!(
             ops2,
@@ -217,7 +217,7 @@ mod tests {
             ],
         );
 
-        let ops3 = a.worker_add("b".to_string(), 1, vec![1, 2, 3]);
+        let ops3 = a.worker_add("b".to_string(), Some(1), vec![1, 2, 3]);
 
         assert_eq!(
             ops3,
