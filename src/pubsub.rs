@@ -193,16 +193,8 @@ impl<WK: Clone + Eq + Hash, QK: Clone + Eq + Hash, JK: Clone + Eq + Hash> MultiQ
                 job_key.clone(),
             )],
             None => {
-                if !self.queues.contains_key(queue_key) {
-                    self.queues.insert(queue_key.clone(), VecDeque::<JK>::default());
-                }
-
-                match self.queues.get_mut(queue_key) {
-                    Some(x) => {
-                        x.push_back(job_key.clone());
-                    },
-                    None => panic!("should never happen")
-                };
+                let entry = self.queues.entry(queue_key.clone()).or_insert_with(|| VecDeque::<JK>::default());
+                entry.push_back(job_key.clone());
 
                 vec![]
             }
