@@ -72,7 +72,7 @@ pub enum ROp {
 
 #[derive(Debug, Clone)]
 pub enum ExecOp2 {
-    ValueSet(ContextIdent, ROp),
+    LocalSet(ContextIdent, ROp),
     ContextSet(ContextIdent, ROp),
 
     ContextCopy(ROp, ROp, ROp),
