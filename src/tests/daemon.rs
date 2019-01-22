@@ -5,8 +5,9 @@ mod tests {
 
     fn create_machine() {
         let mut dpu = DPU::default();
-        dpu.load(
-            &vec![
+        let mut state = dpu.get_state_mut();
+        state.insert_commands(
+            vec![
                 Command::create(
                     "0".to_string(),
                     CommandArgument::Const("nop".to_string()),
@@ -27,21 +28,25 @@ mod tests {
                         CommandArgument::Ref("addr".to_string())
                     ],
                 )
-            ]
+            ].iter()
         );
-
-        let ctx = dpu.put_context(None);
-
-        let thread = dpu.put_thread(
+        
+        let state = dpu.get_state_mut();
+        let ctx = Context::empty(state.create_id());
+        state.insert_context(&ctx);
+        
+        let thr = Thread::create(
+            state.create_id(),
             "0".to_string(),
-            ctx
+            Some(ctx.id)
         );
     }
 
     fn create_machine_err() {
         let mut dpu = DPU::default();
-        dpu.load(
-            &vec![
+        let mut state = dpu.get_state_mut();
+        state.insert_commands(
+            vec![
                 Command::create(
                     "0".to_string(),
                     CommandArgument::Ref("nop".to_string()),
@@ -62,14 +67,17 @@ mod tests {
                         CommandArgument::Ref("addr".to_string())
                     ],
                 )
-            ]
+            ].iter()
         );
-
-        let ctx = dpu.put_context(None);
-
-        let thread = dpu.put_thread(
+    
+        let state = dpu.get_state_mut();
+        let ctx = Context::empty(state.create_id());
+        state.insert_context(&ctx);
+    
+        let thr = Thread::create(
+            state.create_id(),
             "0".to_string(),
-            ctx
+            Some(ctx.id)
         );
     }
 

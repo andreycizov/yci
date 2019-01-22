@@ -1,21 +1,19 @@
 use std::collections::HashMap;
 
-pub(crate) type Id = u128;
-pub(crate) type ThreadId = Id;
-pub(crate) type StepId = Id;
-pub(crate) type ContextId = Id;
-pub(crate) type CommandId = String;
-pub(crate) type WorkerId = Id;
+pub type Id = u128;
+pub type GenId = String;
+pub type ThreadId = GenId;
+pub type StepId = Id;
+pub type ContextId = GenId;
+pub type CommandId = GenId;
+pub type WorkerId = Id;
 
-pub(crate) type ContextIdent = String;
-pub(crate) type ContextValue = String;
-
-//use uuid;
-
+pub type ContextIdent = GenId;
+pub type ContextValue = GenId;
 
 
 #[derive(Debug, Clone)]
-pub(crate) struct Worker {
+pub struct Worker {
     capacity: u64,
     queues: Vec<String>,
 }
@@ -106,6 +104,12 @@ impl Context {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum InterpolationError {
+    EmptyContext,
+    Ref(String)
+}
+
 impl Command {
     pub fn create(
         id: CommandId,
@@ -119,22 +123,20 @@ impl Command {
         }
     }
 
-    pub fn interpolate(&self, ctx: &Context) -> Result<InterpolatedCommand, String> {
-        let a: Result<Vec<InterpolatedCommandArgument>, String> = self.args.iter().map(|x| match x {
+    pub fn interpolate(&self, ctx: Option<&Context>) -> Result<InterpolatedCommand, InterpolationError> {
+        let match_arg = |x: &CommandArgument| match x {
             CommandArgument::Const(v) => Ok(InterpolatedCommandArgument::Const(v.clone())),
-            CommandArgument::Ref(k) => match ctx.vals.get(k) {
-                Some(v) => Ok(InterpolatedCommandArgument::Ref(k.clone(), v.clone())),
-                None => Err(k.clone())
-            },
-        }).collect();
-
-        let opcode = match &self.opcode {
-            CommandArgument::Const(v) => Ok(InterpolatedCommandArgument::Const(v.clone())),
-            CommandArgument::Ref(k) => match ctx.vals.get(k) {
-                Some(v) => Ok(InterpolatedCommandArgument::Ref(k.clone(), v.clone())),
-                None => Err(k.clone())
-            },
+            CommandArgument::Ref(k) => ctx.ok_or(InterpolationError::EmptyContext).and_then(|ctx|{
+                match ctx.vals.get(k) {
+                    Some(v) => Ok(InterpolatedCommandArgument::Ref(k.clone(), v.clone())),
+                    None => Err(InterpolationError::Ref(k.clone()))
+                }
+            })
         };
+
+        let a: Result<Vec<InterpolatedCommandArgument>, InterpolationError> = self.args.iter().map(match_arg).collect();
+
+        let opcode = match_arg(&self.opcode);
 
         Ok(InterpolatedCommand {
             id: self.id.clone(),
