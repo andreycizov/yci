@@ -72,6 +72,7 @@ mod tests {
     
         let state = dpu.get_state_mut();
         let ctx = Context::empty(state.create_id());
+        state.insert_context(&ctx);
     
         let thr = Thread::create(
             state.create_id(),

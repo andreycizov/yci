@@ -236,6 +236,7 @@ static LOCAL_NIP: &str = "$nip";
 static LOCAL_EIP: &str = "$eip";
 static LOCAL_CTX: &str = "$ctx";
 static LOCAL_PAR_CTX: &str = "^ctx";
+static LOCAL_PAR_IP: &str = "^ip";
 
 impl DPU {
     pub fn get_state_mut(&mut self) -> &mut State {
@@ -244,8 +245,6 @@ impl DPU {
     
     fn proceed(&mut self, id: &ThreadId) {
         loop {
-            // whenever we re-store
-            
             let mut thread = match self.state.threads.get(id) {
                 Some(x) => x.clone(),
                 None => return
@@ -334,6 +333,7 @@ impl DPU {
                             Some(ThreadState::Done(Ok(vec![
                                 Op::LocalSet(
                                     "exc".into(),
+                                    // todo serialize exception value into json string
                                     RValue::Local(RValueLocal::Const(err_str))
                                 ),
                                 Op::LocalSet(
@@ -347,7 +347,7 @@ impl DPU {
                                 ),
                                 Op::ContextCopy(
                                     RValueLocal::Ref("new_ctx".into()),
-                                    RValueLocal::Const("err_ip".into()),
+                                    RValueLocal::Const(LOCAL_PAR_IP.into()),
                                     RValueLocal::Ref(LOCAL_NIP.into()),
                                 ),
                                 Op::LocalSet(
