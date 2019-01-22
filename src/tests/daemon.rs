@@ -29,12 +29,15 @@ mod tests {
                 )
             ]
         );
-
-        let ctx = dpu.put_context(None);
-
-        let thread = dpu.put_thread(
+        
+        let state = dpu.get_state_mut();
+        let ctx = Context::empty(state.create_id());
+        state.insert_context(&ctx);
+        
+        let thr = Thread::create(
+            state.create_id(),
             "0".to_string(),
-            Some(ctx)
+            Some(ctx.id)
         );
     }
 
@@ -64,12 +67,14 @@ mod tests {
                 )
             ]
         );
-
-        let ctx = dpu.put_context(None);
-
-        let thread = dpu.put_thread(
+    
+        let state = dpu.get_state_mut();
+        let ctx = Context::empty(state.create_id());
+    
+        let thr = Thread::create(
+            state.create_id(),
             "0".to_string(),
-            Some(ctx)
+            Some(ctx.id)
         );
     }
 

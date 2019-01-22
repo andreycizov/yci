@@ -11,7 +11,7 @@ mod tests {
             values.insert(c.to_string(), i.to_string());
         }
 
-        Context::create(0, values)
+        Context::create(0.to_string(), values)
     }
 
     #[test]
