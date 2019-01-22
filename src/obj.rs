@@ -1,21 +1,19 @@
 use std::collections::HashMap;
 
-pub(crate) type Id = u128;
-pub(crate) type ThreadId = Id;
-pub(crate) type StepId = Id;
-pub(crate) type ContextId = Id;
-pub(crate) type CommandId = String;
-pub(crate) type WorkerId = Id;
+pub type Id = u128;
+pub type GenId = String;
+pub type ThreadId = GenId;
+pub type StepId = Id;
+pub type ContextId = GenId;
+pub type CommandId = GenId;
+pub type WorkerId = Id;
 
-pub(crate) type ContextIdent = String;
-pub(crate) type ContextValue = String;
-
-//use uuid;
-
+pub type ContextIdent = GenId;
+pub type ContextValue = GenId;
 
 
 #[derive(Debug, Clone)]
-pub(crate) struct Worker {
+pub struct Worker {
     capacity: u64,
     queues: Vec<String>,
 }
