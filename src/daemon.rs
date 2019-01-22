@@ -28,6 +28,9 @@ pub enum ThreadError {
     Fetch { id: CommandId },
     Context { id: Option<ContextId> },
     Interpolate { err: InterpolationError },
+    
+    WorkerDuring(WorkerErr),
+    WorkerPost(OpErr),
 }
 
 #[derive(Debug, Clone)]
@@ -40,7 +43,7 @@ pub(crate) enum ThreadState {
     Queued(InterpolatedCommand),
     Assigned(InterpolatedCommand, WorkerId),
     // Running(InterpolatedCommand, LockId),
-    Done,
+    Done(WorkerResult),
     
     Err(ThreadError),
     
@@ -170,9 +173,9 @@ impl RValue {
 
 #[derive(Debug, Clone)]
 pub enum Op {
-    ValueSet(ContextIdent, RValue),
-    ContextSet(ContextIdent, RValueLocal),
+    LocalSet(ContextIdent, RValue),
     
+    ContextSet(ContextIdent, RValueLocal),
     ContextCopy(RValueLocal, RValueLocal, RValueLocal),
     ContextRemove(RValueLocal),
     
@@ -197,7 +200,13 @@ pub struct OpErr {
     op_reason: OpErrReason,
 }
 
-pub type WorkerExec<'a> = Result<&'a Vec<Op>, OpErrReason>;
+#[derive(Debug, Clone)]
+pub enum WorkerErr {
+    Custom(HashMap<String, String>),
+    Default(OpErrReason),
+}
+
+pub type WorkerResult = Result<Vec<Op>, WorkerErr>;
 
 impl Thread {
     pub fn create(id: ThreadId, ip: CommandId, ctx: Option<ContextId>) -> Self {
@@ -224,8 +233,9 @@ impl Default for DPU {
 
 
 static LOCAL_NIP: &str = "$nip";
-static LOCAL_EIP: &str = "eip";
-static LOCAL_CTX: &str = "ctx";
+static LOCAL_EIP: &str = "$eip";
+static LOCAL_CTX: &str = "$ctx";
+static LOCAL_PAR_CTX: &str = "^ctx";
 
 impl DPU {
     pub fn get_state_mut(&mut self) -> &mut State {
@@ -245,9 +255,26 @@ impl DPU {
                 ThreadState::Created => {
                     Some(ThreadState::Fetching(thread.ip.clone()))
                 }
-                ThreadState::Done => {
-                    thread.step += 1;
-                    Some(ThreadState::Fetching(thread.ip.clone()))
+                ThreadState::Done(res) => {
+                    let res = res.clone();
+                    let res =
+                        res.map_err(|res| ThreadError::WorkerDuring(res.clone()));
+                    let res =
+                        res.and_then(
+                            |res|
+                            DPU::exec(&mut thread, &mut self.state, &res).map_err(
+                                |err| ThreadError::WorkerPost(err)
+                            )
+                        );
+                    
+                    match res {
+                        Ok(_) => {
+                            Some(ThreadState::Fetching(thread.ip.clone()))
+                        }
+                        Err(err) => {
+                            Some(ThreadState::Err(err))
+                        }
+                    }
                 }
                 ThreadState::Fetching(ip) => {
                     match self.state.commands.get(ip) {
@@ -300,34 +327,42 @@ impl DPU {
                     None
                 }
                 ThreadState::Err(error) => {
-                    match thread.eip {
+                    match &thread.eip {
                         Some(eip) => {
-                            thread.ip = eip;
-                            thread.eip = None;
-                            // todo ... we need to somehow pass the error to the thread back
-                            // todo should it go to the context or should it be handled as part of the
-                            // todo thread object?
-                            
-                            // todo should it instead go into a separate context that may later on be
-                            // todo disposed of by the thread?
-                            // todo this way threads can easily copy the exception back anywhere.
-                            
-                            let id = self.state.create_id().to_string();
-                            
-                            let mut ctx = Context::empty(id);
                             let err_str = format!("{:?}", error);
                             
-                            ctx.vals.insert(
-                                // todo serialize err_str as json
-                                "exc".to_string(),
-                                err_str,
-                            );
-                            
-                            self.state.insert_context(&ctx);
-                            
-                            thread.ctx = Some(ctx.id);
-                            
-                            Some(ThreadState::Done)
+                            Some(ThreadState::Done(Ok(vec![
+                                Op::LocalSet(
+                                    "exc".into(),
+                                    RValue::Local(RValueLocal::Const(err_str))
+                                ),
+                                Op::LocalSet(
+                                    "new_ctx".into(),
+                                    RValue::Extern(RValueExtern::ContextCreate)
+                                ),
+                                Op::ContextCopy(
+                                    RValueLocal::Ref("new_ctx".into()),
+                                    RValueLocal::Const(LOCAL_PAR_CTX.into()),
+                                    RValueLocal::Ref(LOCAL_CTX.into()),
+                                ),
+                                Op::ContextCopy(
+                                    RValueLocal::Ref("new_ctx".into()),
+                                    RValueLocal::Const("err_ip".into()),
+                                    RValueLocal::Ref(LOCAL_NIP.into()),
+                                ),
+                                Op::LocalSet(
+                                    LOCAL_CTX.into(),
+                                    RValue::Local(RValueLocal::Ref("new_ctx".into()))
+                                ),
+                                Op::LocalSet(
+                                    LOCAL_NIP.into(),
+                                    RValue::Local(RValueLocal::Const(eip.clone()))
+                                ),
+                                Op::LocalSet(
+                                    LOCAL_EIP.into(),
+                                    RValue::Local(RValueLocal::Const("".into()))
+                                )
+                            ])))
                         }
                         None => {
                             Some(ThreadState::Exited(Err(error.clone())))
@@ -340,6 +375,7 @@ impl DPU {
                             None
                         }
                         Err(err) => {
+                            // thread had reached the exception stack
                             None
                         }
                     }
@@ -377,7 +413,7 @@ impl DPU {
             let map_err_fn = |op_reason| OpErr { op_index: Some(op_index), op_reason };
             
             match op {
-                Op::ValueSet(loc_ident, rval) => {
+                Op::LocalSet(loc_ident, rval) => {
                     locals.insert(
                         loc_ident.clone(),
                         rval.resolve(&locals, state).map_err(map_err_fn)?,
