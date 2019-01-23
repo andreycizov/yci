@@ -13,7 +13,7 @@ pub type ContextValue = GenId;
 
 
 #[derive(Debug, Clone)]
-pub struct Worker {
+pub struct WorkerStatus {
     capacity: u64,
     queues: Vec<String>,
 }
@@ -33,7 +33,7 @@ impl Context {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Command {
     pub(crate) id: CommandId,
     pub(crate) opcode: CommandArgument,
@@ -62,7 +62,7 @@ impl InterpolatedCommand {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum CommandArgument {
     // value
     Const(ContextValue),

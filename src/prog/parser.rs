@@ -263,13 +263,13 @@ impl <T>Located<T> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum IRArg {
     Const(String),
     Ref(String),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum IRLine {
     Command(Located<String>, Vec<Located<IRArg>>),
     Comment(String),

@@ -3,7 +3,7 @@ use nom::{IResult, Err as NomErr, Context as NomContext};
 use crate::prog::parser::*;
 use crate::obj::*;
 
-type IRMap = Vec<Command>;
+pub(crate) type IRMap = Vec<Command>;
 
 #[derive(Debug)]
 pub struct IRErr<'a, EP> {
@@ -29,22 +29,23 @@ pub enum IRErrType<'a, EP> {
 
     //
     ParserError(NomErr<Input<'a>, EP>),
+    ParserErrorUnk,
     ParserFailure,
 }
 
-pub fn ir_load<'a, EP>(file: IResult<Input<'a>, IRFile, EP>) -> Result<IRMap, IRErr<'a, EP>> {
+pub fn ir_load<'a, 'b, EP>(file: IResult<Input<'a>, IRFile, EP>) -> Result<IRMap, IRErr<'b, EP>> {
     let file = match file {
         Ok((prepend, res)) => {
             if prepend.fragment.len() > 0 {
                 return Err(
                     IRErr::new(
-                        Location::from_span(&prepend),
+                        Location::from_span(&prepend.clone()),
                         IRErrType::AdditionalData,
                     )
                 );
             }
 
-            res
+            res.clone()
         }
         Err(nom_err) => {
             let null_loc = Location::new(0, 0);
@@ -56,7 +57,7 @@ pub fn ir_load<'a, EP>(file: IResult<Input<'a>, IRFile, EP>) -> Result<IRMap, IR
                 NomErr::Error(ctx) => {
                     match ctx {
                         NomContext::Code(prepend, _) => {
-                            Location::from_span(&prepend)
+                            Location::from_span(&prepend.clone())
                         }
 // [verbose_errors_only]
 //                        NomContext::List(items) => {
@@ -72,7 +73,7 @@ pub fn ir_load<'a, EP>(file: IResult<Input<'a>, IRFile, EP>) -> Result<IRMap, IR
                 NomErr::Failure(ctx) => {
                     match ctx {
                         NomContext::Code(prepend, _) => {
-                            Location::from_span(&prepend)
+                            Location::from_span(&prepend.clone())
                         }
 // [verbose_errors_only]
 //                        NomContext::List(items) => {
@@ -89,7 +90,8 @@ pub fn ir_load<'a, EP>(file: IResult<Input<'a>, IRFile, EP>) -> Result<IRMap, IR
 
             return Err(IRErr::new(
                 loc,
-                IRErrType::ParserError(nom_err),
+                //IRErrType::ParserError(*nom_err.clone()),
+                IRErrType::ParserErrorUnk,
             ));
         }
     };
@@ -127,7 +129,7 @@ pub fn ir_load<'a, EP>(file: IResult<Input<'a>, IRFile, EP>) -> Result<IRMap, IR
                     res.push(
                         Command::create(
                             key.item.clone(),
-                            map_param((&opcode_mapped.item).clone()),
+                            map_param(&(&opcode_mapped.item).clone()),
                             params,
                         )
                     )

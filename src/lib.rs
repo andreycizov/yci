@@ -7,6 +7,7 @@ pub mod obj;
 pub mod prog;
 pub mod daemon;
 pub mod pubsub;
+pub mod worker;
 
 //pub use obj;
 //pub use microcode;
