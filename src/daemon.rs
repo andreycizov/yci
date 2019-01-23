@@ -6,6 +6,8 @@ use super::obj::*;
 use super::pubsub::*;
 use super::worker::*;
 use std::collections::VecDeque;
+use std::sync::mpsc::Sender;
+use std::sync::mpsc::Receiver;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Thread {
@@ -64,7 +66,11 @@ pub struct State {
 
 impl State {
     pub fn create_id(&mut self) -> GenId {
-        self.rng.gen::<u128>().to_string()
+        let val = self.rng.gen::<u128>();
+
+        let val = format!("{:X}", val);
+
+        val
     }
 
     pub fn insert_thread(&mut self, thread: Thread) {
@@ -97,9 +103,9 @@ impl Default for State {
 pub struct DPU<'a> {
     state: State,
 
-    multi_queue: MultiQueue<WorkerId, ContextValue, ThreadId>,
+    multi_queue: MQ,
     workers: HashMap<WorkerId, &'a mut Worker>,
-    assignment_queue: VecDeque<Assignment<WorkerId, ContextValue, ThreadId>>,
+    assignment_queue: VecDeque<Ass>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -232,7 +238,7 @@ impl<'a> Default for DPU<'a> {
     fn default() -> Self {
         DPU {
             state: State::default(),
-            multi_queue: MultiQueue::<WorkerId, ContextValue, ThreadId>::default(),
+            multi_queue: MQ::default(),
             workers: HashMap::<WorkerId, &'a mut Worker>::default(),
 
             assignment_queue: VecDeque::<Ass>::default(),
@@ -248,8 +254,12 @@ pub static LOCAL_CTX: &str = "$ctx";
 pub static LOCAL_PAR_CTX: &str = "^ctx";
 pub static LOCAL_PAR_IP: &str = "^ip";
 
-pub(crate) type MQ = MultiQueue<WorkerId, ContextValue, ThreadId>;
-pub(crate) type Ass = Assignment<WorkerId, ContextValue, ThreadId>;
+pub(crate) type MQ = MultiQueue<WorkerId, ContextValue, (ThreadId, StepId)>;
+pub(crate) type Ass = Assignment<WorkerId, ContextValue, (ThreadId, StepId)>;
+
+pub enum DPUComm {
+    Finished(WorkerId, CommandId, ThreadId, StepId, WorkerResult),
+}
 
 impl<'a> DPU<'a> {
     pub fn get_state_mut(&mut self) -> &mut State {
@@ -272,6 +282,92 @@ impl<'a> DPU<'a> {
             queues,
         ) {
             assignment_queue.push_back(a)
+        }
+    }
+
+    pub(crate) fn job_add(
+        ep: CommandId,
+        ctx: Option<ContextId>,
+        state: &mut State,
+        assignment_queue: &mut VecDeque<Ass>,
+        multi_queue: &mut MQ,
+    ) -> ThreadId {
+        let id = state.create_id();
+
+        let thread = Thread::create(
+            id.clone(),
+            ep,
+            ctx,
+        );
+
+        state.insert_thread(
+            thread
+        );
+
+        DPU::proceed(
+            &id,
+            state,
+            assignment_queue,
+            multi_queue,
+        );
+
+        id.clone()
+    }
+
+    pub(crate) fn process_channel(
+        receiver: &Receiver<DPUComm>,
+        state: &mut State,
+        assignment_queue: &mut VecDeque<Ass>,
+        multi_queue: &mut MQ,
+    ) {
+        while let Ok(pkt) = receiver.try_recv() {
+            match pkt {
+                DPUComm::Finished(wid, queue_id, thread_id, step_id, res) => {
+                    let thread = state.threads.get_mut(&thread_id).unwrap();
+
+                    assert_eq!(step_id, thread.step);
+
+                    thread.state = ThreadState::Done(res);
+
+                    multi_queue.job_finish(&queue_id, &(thread_id.clone(), step_id));
+
+                    DPU::proceed(
+                        &thread_id,
+                        state,
+                        assignment_queue,
+                        multi_queue,
+                    )
+                }
+            }
+        }
+    }
+
+    pub(crate) fn process_assignments(
+        sender: Sender<DPUComm>,
+        state: &mut State,
+        assignment_queue: &mut VecDeque<Ass>,
+        workers: &mut HashMap<WorkerId, &'a mut Worker>,
+    ) {
+        let drained = assignment_queue.drain(..);
+
+        for ass in drained {
+            assert_eq!(ass.action, Action::Started);
+
+            let (thread_id, step_id) = ass.job_key;
+
+            let worker = workers.get_mut(&ass.worker_key).unwrap();
+            let thread = state.threads.get_mut(&thread_id).unwrap();
+
+            let command = match &thread.state {
+                ThreadState::Queued(cmd) => cmd,
+                _ => panic!("{:?}", thread.state)
+            };
+
+            // there is a situation where the thread was woken up by the
+
+            assert_eq!(step_id, thread.step);
+
+            worker.put(command, WorkerReplier::new(ass.worker_key, ass.queue_key, thread_id, step_id, sender.clone()))
         }
     }
 
@@ -338,7 +434,9 @@ impl<'a> DPU<'a> {
                     }
                 }
                 ThreadState::Interpolated(command) => {
-                    let assignment = multi_queue.job_create(&command.opcode.value(), &thread.id);
+                    thread.step = thread.step.wrapping_add(1);
+
+                    let assignment = multi_queue.job_create(&command.opcode.value(), &(thread.id.clone(), thread.step));
 
                     for val in assignment {
                         assignment_queue.push_back(val);
@@ -422,8 +520,6 @@ impl<'a> DPU<'a> {
                     }
                 }
             };
-
-            thread.step = thread.step.wrapping_add(1);
 
             let mut should_break = false;
 

@@ -4,8 +4,7 @@ use crate::obj::*;
 use crate::pubsub::*;
 use crate::tests::prog::*;
 use crate::worker::*;
-
-type Ass = Assignment<WorkerId, ContextValue, ThreadId>;
+use std::sync::mpsc::channel;
 
 struct W1 {}
 
@@ -124,7 +123,9 @@ impl Worker for W1 {
                     ]
                 )
             }
+            "set" => {
 
+            }
             _ => {
                 panic!("Unknown opcode")
             }
@@ -136,22 +137,23 @@ impl Worker for W1 {
 fn test_worker_a() {
     let mut state = State::default();
     let mut assignment_queue = VecDeque::<Ass>::default();
-    let mut multi_queue = MultiQueue::<WorkerId, ContextValue, ThreadId>::default();
+    let mut multi_queue = MQ::default();
     let mut workers = HashMap::<WorkerId, &mut Worker>::default();
+
+    let (tx, rx) = channel::<DPUComm>();
 
     let ir = LoadIRFile::new(TEST_ALGO);
     let ir = ir.load().unwrap();
 
     state.insert_commands(ir.iter());
 
-    let thread_id = state.create_id();
-    let thread = Thread::create(
-        thread_id.clone(),
+    let thread_id = DPU::job_add(
         "ep".into(),
         None,
+        &mut state,
+        &mut assignment_queue,
+        &mut multi_queue,
     );
-
-    state.insert_thread(thread);
 
     let mut wo = W1 {};
 
@@ -163,45 +165,22 @@ fn test_worker_a() {
         &mut assignment_queue,
     );
 
-    DPU::proceed(
-        &thread_id,
-        &mut state,
-        &mut assignment_queue,
-        &mut multi_queue,
-    );
+
 
     for i in 0..100 {
-        let z: Vec<Ass> = assignment_queue.drain(..).collect();
+        DPU::process_assignments(
+            tx.clone(),
+            &mut state,
+            &mut assignment_queue,
+            &mut workers
+        );
 
-        for x in z {
-            assert_eq!(x.action, Action::Started);
-
-            let w1 = workers.get_mut(&x.worker_key).unwrap();
-
-            let thread = state.threads.get_mut(&x.job_key).unwrap();
-
-            let inter = match &thread.state {
-                ThreadState::Queued(cmd) => cmd,
-                _ => panic!("{:?}", thread.state)
-            };
-
-            let result = w1.exec(inter);
-            let result = dbg!(result);
-
-            thread.state = ThreadState::Done(
-                result
-            );
-
-
-            DPU::proceed(
-                &thread.id.clone(),
-                &mut state,
-                &mut assignment_queue,
-                &mut multi_queue,
-            );
-
-            let thread = dbg!(state.threads.get(&x.job_key).unwrap());
-        };
+        DPU::process_channel(
+            &rx,
+            &mut state,
+            &mut assignment_queue,
+            &mut multi_queue
+        );
     }
 
 
