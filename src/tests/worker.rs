@@ -19,6 +19,9 @@ impl Worker for W1 {
             "list_create".into(),
             "list_length".into(),
             "db_user_list".into(),
+            "set".into(),
+            "icmp".into(),
+            "if".into(),
         ]
     }
 
@@ -104,7 +107,7 @@ impl Worker for W1 {
                 )?;
 
                 let var_name = match var_name {
-                    InterpolatedCommandArgument::Const(_) => Err(WorkerErr::Default(OpErrReason::InvalidArg {idx:0})),
+                    InterpolatedCommandArgument::Const(_) => Err(WorkerErr::Default(OpErrReason::InvalidArg(0))),
                     InterpolatedCommandArgument::Ref(ident, _) => Ok(ident)
                 }?;
 
@@ -124,7 +127,121 @@ impl Worker for W1 {
                 )
             }
             "set" => {
+                let mut iter = command.args.iter();
 
+                let mut nip: Option<_> = None;
+                let mut ret = Vec::<Op>::with_capacity(command.args.len() + 1 / 2);
+
+                loop {
+                    let a = iter.next().ok_or(
+                        WorkerErr::Default(OpErrReason::ContextRefInvalid { ident: "".into() })
+                    )?;
+
+                    if let Some(b) = iter.next() {
+                        ret.push(
+                            Op::ContextSet(
+                                a.value(),
+                                RValueLocal::Const(b.value()),
+                            )
+                        )
+                    } else {
+                        nip = Some(a);
+                        break;
+                    }
+                }
+
+                ret.push(
+                    Op::LocalSet(
+                        LOCAL_NIP.into(),
+                        RValue::Local(RValueLocal::Const(nip.unwrap().value())),
+                    )
+                );
+
+                Ok(
+                    ret
+                )
+            }
+            "icmp" => {
+                let mut iter = command.args.iter();
+
+                let a = iter.next().ok_or(
+                    WorkerErr::Default(OpErrReason::MissingArg(0))
+                )?;
+
+                let a = a.value().parse::<u128>().map_err(
+                    |_| WorkerErr::Default(OpErrReason::InvalidArg(0))
+                )?;
+
+                let op = iter.next().ok_or(
+                    WorkerErr::Default(OpErrReason::MissingArg(1))
+                )?;
+
+                let b = iter.next().ok_or(
+                    WorkerErr::Default(OpErrReason::MissingArg(2))
+                )?;
+
+                let b = b.value().parse::<u128>().map_err(
+                    |_| WorkerErr::Default(OpErrReason::InvalidArg(2))
+                )?;
+
+                let d = iter.next().ok_or(
+                    WorkerErr::Default(OpErrReason::MissingArg(3))
+                )?;
+
+                let cmp_fn: fn(u128, u128) -> bool = match op.value().as_ref() {
+                    "<" => |a, b| a < b,
+                    ">" => |a, b| a > b,
+                    "=" => |a, b| a > b,
+                    _ => return Err(WorkerErr::Default(OpErrReason::InvalidArg(1)))
+                };
+
+                let res = cmp_fn(a,b).to_string();
+
+                let next_ip = nip()?;
+
+                Ok(
+                    vec![
+                        Op::ContextSet(
+                            d.value().clone(),
+                            RValueLocal::Const(res),
+                        ),
+                        Op::LocalSet(
+                            LOCAL_NIP.into(),
+                            RValue::Local(RValueLocal::Const(next_ip.value())),
+                        ),
+                    ]
+                )
+
+            }
+            "if" => {
+                let mut iter = command.args.iter();
+                let a = iter.next().ok_or(
+                    WorkerErr::Default(OpErrReason::MissingArg(0))
+                )?;
+
+                let a = a.value().parse::<bool>().map_err(
+                    |_| WorkerErr::Default(OpErrReason::InvalidArg(0))
+                )?;
+
+                let b = iter.next().ok_or(
+                    WorkerErr::Default(OpErrReason::MissingArg(1))
+                )?;
+
+                let c = iter.next().ok_or(
+                    WorkerErr::Default(OpErrReason::MissingArg(2))
+                )?;
+
+                let b = b.value();
+                let c = c.value();
+
+                Ok(
+                    vec![
+                        Op::LocalSet(
+                            LOCAL_NIP.into(),
+                            RValue::Local(RValueLocal::Const(if a { b } else {c})),
+                        ),
+                    ]
+                )
             }
             _ => {
                 panic!("Unknown opcode")
@@ -166,20 +283,19 @@ fn test_worker_a() {
     );
 
 
-
     for i in 0..100 {
         DPU::process_assignments(
             tx.clone(),
             &mut state,
             &mut assignment_queue,
-            &mut workers
+            &mut workers,
         );
 
         DPU::process_channel(
             &rx,
             &mut state,
             &mut assignment_queue,
-            &mut multi_queue
+            &mut multi_queue,
         );
     }
 
