@@ -238,6 +238,25 @@ fn test_multi_queue_e() {
 }
 
 #[test]
+fn test_multi_queue_cancel_job() {
+    let mut a = MultiQueue::<String, u32, Jobs>::default();
+
+    let ops = a.job_create(&1, &Jobs::A);
+
+    assert_eq!(
+        ops,
+        vec![]
+    );
+
+    let ops = a.job_finish(&1, &Jobs::A);
+
+    assert_eq!(
+        ops,
+        vec![]
+    );
+}
+
+#[test]
 fn test_multi_queue_cancel() {
     let mut a = MultiQueue::<String, u32, Jobs>::default();
     let ops2 = a.worker_add("a".to_string(), None, vec![1, 2, 3]);

@@ -3,25 +3,25 @@
 use crate::obj::InterpolatedCommand;
 use crate::daemon::WorkerResult;
 use std::sync::mpsc::{Sender};
-use crate::daemon::DPUComm;
+use crate::daemon::DaemonRequest;
 use crate::obj::*;
 
 #[derive(Clone)]
-pub struct WorkerReplier {
+pub struct WorkerReplier<'a> {
     wid: WorkerId,
     qid: CommandId,
     tid: ThreadId,
     sid: StepId,
-    sender: Sender<DPUComm>
+    sender: Sender<DaemonRequest<'a>>
 }
 
-impl WorkerReplier {
+impl <'a>WorkerReplier<'a> {
     pub fn new(
         wid: WorkerId,
         qid: CommandId,
         tid: ThreadId,
         sid: StepId,
-        sender: Sender<DPUComm>
+        sender: Sender<DaemonRequest<'a>>
     ) -> Self {
         WorkerReplier {
             wid,
@@ -32,7 +32,7 @@ impl WorkerReplier {
     }
 
     pub fn reply(&mut self, x: WorkerResult) {
-        self.sender.send(DPUComm::Finished(self.wid, self.qid.clone(), self.tid.clone(), self.sid, x));
+        self.sender.send(DaemonRequest::Finished(self.wid.clone(), self.qid.clone(), self.tid.clone(), self.sid, x));
     }
 }
 

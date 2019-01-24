@@ -6,7 +6,8 @@ pub type ThreadId = GenId;
 pub type StepId = Id;
 pub type ContextId = GenId;
 pub type CommandId = GenId;
-pub type WorkerId = Id;
+pub type WorkerId = GenId;
+pub type PauseId = GenId;
 
 pub type ContextIdent = GenId;
 pub type ContextValue = GenId;

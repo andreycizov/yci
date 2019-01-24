@@ -52,7 +52,7 @@ pub(crate) enum ThreadState {
     Err(ThreadError),
 
     // Waiting
-    Paused,
+    Paused(PauseId),
     Exited(Result<(), ThreadError>),
 }
 
@@ -258,8 +258,16 @@ pub static LOCAL_PAR_IP: &str = "^ip";
 pub(crate) type MQ = MultiQueue<WorkerId, ContextValue, (ThreadId, StepId)>;
 pub(crate) type Ass = Assignment<WorkerId, ContextValue, (ThreadId, StepId)>;
 
-pub enum DPUComm {
+pub enum DaemonResponse {
+    WorkerCreated(WorkerId),
+}
+
+pub enum DaemonRequest<'a> {
     Finished(WorkerId, CommandId, ThreadId, StepId, WorkerResult),
+
+    /// worker needs a WorkerId
+    WorkerAdd(&'a mut Worker, Sender<DaemonResponse>),
+    WorkerRemove(WorkerId),
 }
 
 impl<'a> DPU<'a> {
@@ -268,22 +276,46 @@ impl<'a> DPU<'a> {
     }
 
     pub(crate) fn worker_add(
-        key: WorkerId,
+        key: &WorkerId,
         worker: &'a mut Worker,
         workers: &mut HashMap<WorkerId, &'a mut Worker>,
         multi_queue: &mut MQ,
         assignment_queue: &mut VecDeque<Ass>,
-    ) {
+    ) -> bool {
         let capa = worker.capacity().clone();
         let queues = worker.queues().clone();
-        workers.insert(key.clone(), worker);
+        match workers.insert(key.clone(), worker) {
+            Some(_) => return true,
+            None => {}
+        };
+
         for a in multi_queue.worker_add(
-            key,
+            key.clone(),
             capa,
             queues,
         ) {
             assignment_queue.push_back(a)
+        };
+
+        false
+    }
+
+    pub(crate) fn worker_remove(
+        key: &WorkerId,
+        workers: &mut HashMap<WorkerId, &'a mut Worker>,
+        multi_queue: &mut MQ,
+        assignment_queue: &mut VecDeque<Ass>,
+    ) -> bool {
+        match workers.remove(key) {
+            Some(_) => return false,
+            None => {}
         }
+
+        for a in multi_queue.worker_remove(key) {
+            assignment_queue.push_back(a)
+        };
+
+        true
     }
 
     pub(crate) fn job_add(
@@ -316,14 +348,16 @@ impl<'a> DPU<'a> {
     }
 
     pub(crate) fn process_channel(
-        receiver: &Receiver<DPUComm>,
+        receiver: &Receiver<DaemonRequest<'a>>,
         state: &mut State,
+
         assignment_queue: &mut VecDeque<Ass>,
+        workers: &mut HashMap<WorkerId, &'a mut Worker>,
         multi_queue: &mut MQ,
     ) {
         while let Ok(pkt) = receiver.try_recv() {
             match pkt {
-                DPUComm::Finished(wid, queue_id, thread_id, step_id, res) => {
+                DaemonRequest::Finished(wid, queue_id, thread_id, step_id, res) => {
                     let thread = state.threads.get_mut(&thread_id).unwrap();
 
                     assert_eq!(step_id, thread.step);
@@ -339,12 +373,37 @@ impl<'a> DPU<'a> {
                         multi_queue,
                     )
                 }
+                DaemonRequest::WorkerAdd(wrkr, reply_to) => {
+                    let id = state.create_id();
+
+                    DPU::worker_add(
+                        &id,
+                        wrkr,
+                        workers,
+                        multi_queue,
+                        assignment_queue,
+                    );
+
+                    reply_to.send(DaemonResponse::WorkerCreated(id));
+                }
+                DaemonRequest::WorkerRemove(wrkr) => {
+                    DPU::worker_remove(
+                        &wrkr,
+                        workers,
+                        multi_queue,
+                        assignment_queue,
+                    );
+                }
+                // todo enable exceptional condition handling from external (e.g. enable an exception to be raised in a running task)
+                // todo enable unpausing threads
             }
         }
+
+        // todo we need to make sure that we process the assignment queue every time we exit
     }
 
     pub(crate) fn process_assignments(
-        sender: Sender<DPUComm>,
+        sender: Sender<DaemonRequest>,
         state: &mut State,
         assignment_queue: &mut VecDeque<Ass>,
         workers: &mut HashMap<WorkerId, &'a mut Worker>,
@@ -443,26 +502,16 @@ impl<'a> DPU<'a> {
                         assignment_queue.push_back(val);
                     }
 
-
-//                    match assignment.first() {
-//                        Some(x) => {
-//                            Some(ThreadState::Assigned(command.clone(), x.worker_key))
-//                        }
-//                        None => {
-//                            Some(ThreadState::Queued(command.clone()))
-//                        }
-//                    }
-
                     Some(ThreadState::Queued(command.clone()))
                 }
-                ThreadState::Queued(command) => {
+                ThreadState::Queued(_) => {
                     None
                 }
-                ThreadState::Assigned(command, worker_id) => {
+                ThreadState::Assigned(_, _) => {
                     // todo notify the relevant worker_id
                     None
                 }
-                ThreadState::Paused => {
+                ThreadState::Paused(_) => {
                     None
                 }
                 ThreadState::Err(error) => {

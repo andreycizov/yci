@@ -252,12 +252,13 @@ impl Worker for W1 {
 
 #[test]
 fn test_worker_a() {
+
+
     let mut state = State::default();
     let mut assignment_queue = VecDeque::<Ass>::default();
     let mut multi_queue = MQ::default();
     let mut workers = HashMap::<WorkerId, &mut Worker>::default();
 
-    let (tx, rx) = channel::<DPUComm>();
 
     let ir = LoadIRFile::new(TEST_ALGO);
     let ir = ir.load().unwrap();
@@ -274,8 +275,11 @@ fn test_worker_a() {
 
     let mut wo = W1 {};
 
+    let (tx, rx) = channel::<DaemonRequest>();
+
+
     DPU::worker_add(
-        1,
+        &"1".into(),
         &mut wo as &mut Worker,
         &mut workers,
         &mut multi_queue,
@@ -295,19 +299,20 @@ fn test_worker_a() {
             &rx,
             &mut state,
             &mut assignment_queue,
+            &mut workers,
             &mut multi_queue,
         );
     }
 
-
-//    let z = dbg!(z);
-
     assert_eq!(
-        state.threads.get(&thread_id).unwrap().state, ThreadState::Assigned(
-            InterpolatedCommand::create("01".into(), InterpolatedCommandArgument::Const("02".into()), vec![]),
-            005,
+        state.threads.get(&thread_id).unwrap().state,
+        ThreadState::Queued(
+            InterpolatedCommand::create("07".into(), InterpolatedCommandArgument::Const("list_get".into()), vec![
+                InterpolatedCommandArgument::Ref("users".into(), "foo@bar.com,zeta@beta.org,culinary@sky.net".into()),
+                InterpolatedCommandArgument::Ref("i".into(), "0".into()),
+                InterpolatedCommandArgument::Const("user_id".into()),
+                InterpolatedCommandArgument::Const("08".into()),
+            ]),
         ),
     );
-//    assert_eq!(z, vec![]);
-//    assert_eq!(z.len(), 1);
 }
