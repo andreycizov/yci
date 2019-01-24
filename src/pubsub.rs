@@ -102,6 +102,35 @@ impl<WK: Clone + Eq + Hash, QK: Clone + Eq + Hash, JK: Clone + Eq + Hash> PubSub
         }
     }
 
+    pub fn remove(&mut self, key: &WK) -> Option<Vec<(QK, JK)>> {
+        let val = self.workers.remove(key);
+
+        let val = match val {
+            Some(val) => val,
+            None => return None
+        };
+
+        for queue_key in &val.queues {
+
+            let to_remove = match self.queues_workers.get_mut(queue_key) {
+                Some(queue_worker) => {
+                    queue_worker.remove(&val.key);
+
+                    queue_worker.len() == 0
+                }
+                None => {
+                    false
+                }
+            };
+
+            if to_remove {
+                self.queues_workers.remove(queue_key);
+            }
+        }
+
+        Some(val.current.iter().map(|x| (x.qk.clone(), x.jk.clone())).collect())
+    }
+
     fn worker_enable(&mut self, key: &WK) {
         let worker = self.workers.get(key).unwrap();
 
@@ -134,6 +163,7 @@ impl<WK: Clone + Eq + Hash, QK: Clone + Eq + Hash, JK: Clone + Eq + Hash> PubSub
 
     pub fn assign(&mut self, key: &QK, job_key: &JK) -> Option<WK> {
         let worker_id = match self.queues_workers.get(key) {
+            // todo current implementation is incredibly greedy towards the first element
             Some(workers) => Some(workers.iter().nth(0).unwrap().clone()),
             None => None
         };
@@ -193,8 +223,7 @@ impl<WK: Clone + Eq + Hash, QK: Clone + Eq + Hash, JK: Clone + Eq + Hash> MultiQ
                 job_key.clone(),
             )],
             None => {
-                let entry = self.queues.entry(queue_key.clone()).or_insert_with(|| VecDeque::<JK>::default());
-                entry.push_back(job_key.clone());
+                self.job_pending(queue_key, job_key);
 
                 vec![]
             }
@@ -255,6 +284,25 @@ impl<WK: Clone + Eq + Hash, QK: Clone + Eq + Hash, JK: Clone + Eq + Hash> MultiQ
         self.worker_queues.insert(key, queues.clone());
 
         self.assign_queues(&queues, capacity)
+    }
+
+    pub fn worker_remove(&mut self, key: &WK) -> Vec<Assignment<WK, QK, JK>> {
+        let reassigned = self.pubsub.remove(key).unwrap();
+
+        self.worker_queues.remove(&key);
+
+        for (qk, jk) in reassigned.iter() {
+            self.job_pending(&qk, &jk);
+        }
+
+        reassigned.iter().map(|(qk, jk)| Assignment::new(
+            Action::Cancelled, key.clone(), qk.clone(), jk.clone())
+        ).collect()
+    }
+
+    fn job_pending(&mut self, queue_key: &QK, job_key: &JK) {
+        let entry = self.queues.entry(queue_key.clone()).or_insert_with(|| VecDeque::<JK>::default());
+        entry.push_back(job_key.clone());
     }
 
     fn assign_queues(&mut self, queues: &Vec<QK>, capacity: Option<usize>) -> Vec<Assignment<WK, QK, JK>> {
