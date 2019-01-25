@@ -16,5 +16,7 @@ path = "src/bin.rs"
 [dependencies]
 uuid = { version = "0.7", features = ["v4"] }
 rand = "0.6.4"
+mio = "0.6"
+mio-extras = "2.0.5"
 nom = { version = "4.1.1" }
 nom_locate = { version = "0.3.1" }

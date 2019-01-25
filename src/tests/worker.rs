@@ -1,30 +1,13 @@
 use std::collections::{HashMap, VecDeque};
 use crate::daemon::*;
 use crate::obj::*;
-use crate::pubsub::*;
 use crate::tests::prog::*;
 use crate::worker::*;
-use std::sync::mpsc::channel;
+use mio_extras::channel::channel;
 
 struct W1 {}
 
-impl Worker for W1 {
-    fn capacity(&self) -> Option<usize> {
-        None
-    }
-
-    fn queues(&self) -> Vec<ContextValue> {
-        vec![
-            "push".into(),
-            "list_create".into(),
-            "list_length".into(),
-            "db_user_list".into(),
-            "set".into(),
-            "icmp".into(),
-            "if".into(),
-        ]
-    }
-
+impl W1 {
     fn exec(&mut self, command: &InterpolatedCommand) -> WorkerResult {
         let nip = || {
             let next_ip = command.args.last();
@@ -195,7 +178,7 @@ impl Worker for W1 {
                     _ => return Err(WorkerErr::Default(OpErrReason::InvalidArg(1)))
                 };
 
-                let res = cmp_fn(a,b).to_string();
+                let res = cmp_fn(a, b).to_string();
 
                 let next_ip = nip()?;
 
@@ -211,7 +194,6 @@ impl Worker for W1 {
                         ),
                     ]
                 )
-
             }
             "if" => {
                 let mut iter = command.args.iter();
@@ -238,7 +220,7 @@ impl Worker for W1 {
                     vec![
                         Op::LocalSet(
                             LOCAL_NIP.into(),
-                            RValue::Local(RValueLocal::Const(if a { b } else {c})),
+                            RValue::Local(RValueLocal::Const(if a { b } else { c })),
                         ),
                     ]
                 )
@@ -250,14 +232,34 @@ impl Worker for W1 {
     }
 }
 
+impl Worker for W1 {
+    fn capacity(&self) -> Option<usize> {
+        None
+    }
+
+    fn queues(&self) -> Vec<ContextValue> {
+        vec![
+            "push".into(),
+            "list_create".into(),
+            "list_length".into(),
+            "db_user_list".into(),
+            "set".into(),
+            "icmp".into(),
+            "if".into(),
+        ]
+    }
+
+    fn put(&mut self, command: &InterpolatedCommand, result_cb: WorkerReplier) {
+        result_cb.clone().reply(self.exec(command))
+    }
+}
+
 #[test]
 fn test_worker_a() {
-
-
     let mut state = State::default();
     let mut assignment_queue = VecDeque::<Ass>::default();
     let mut multi_queue = MQ::default();
-    let mut workers = HashMap::<WorkerId, &mut Worker>::default();
+    let mut workers = WS::default();
 
 
     let ir = LoadIRFile::new(TEST_ALGO);
@@ -280,7 +282,7 @@ fn test_worker_a() {
 
     DPU::worker_add(
         &"1".into(),
-        &mut wo as &mut Worker,
+        Box::new(wo),
         &mut workers,
         &mut multi_queue,
         &mut assignment_queue,

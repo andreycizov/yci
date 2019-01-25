@@ -1,5 +1,7 @@
 extern crate uuid;
 extern crate rand;
+extern crate mio;
+extern crate mio_extras;
 
 use std::collections::HashMap;
 
@@ -8,6 +10,7 @@ pub mod prog;
 pub mod daemon;
 pub mod pubsub;
 pub mod worker;
+pub mod net;
 
 //pub use obj;
 //pub use microcode;

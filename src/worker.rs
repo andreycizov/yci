@@ -2,32 +2,33 @@
 
 use crate::obj::InterpolatedCommand;
 use crate::daemon::WorkerResult;
-use std::sync::mpsc::{Sender};
 use crate::daemon::DaemonRequest;
 use crate::obj::*;
+use mio_extras::channel::Sender;
 
 #[derive(Clone)]
-pub struct WorkerReplier<'a> {
+pub struct WorkerReplier {
     wid: WorkerId,
     qid: CommandId,
     tid: ThreadId,
     sid: StepId,
-    sender: Sender<DaemonRequest<'a>>
+    sender: Sender<DaemonRequest>,
 }
 
-impl <'a>WorkerReplier<'a> {
+impl WorkerReplier {
     pub fn new(
         wid: WorkerId,
         qid: CommandId,
         tid: ThreadId,
         sid: StepId,
-        sender: Sender<DaemonRequest<'a>>
+        sender: Sender<DaemonRequest>,
     ) -> Self {
         WorkerReplier {
             wid,
             qid,
             tid,
-            sid, sender
+            sid,
+            sender,
         }
     }
 
@@ -36,20 +37,20 @@ impl <'a>WorkerReplier<'a> {
     }
 }
 
+unsafe impl Send for WorkerReplier {
+
+}
+
 pub trait Worker {
     /// Return the available worker capacity. This should not change.
     fn capacity(&self) -> Option<usize>;
 
     /// List queues associated with the worker
-    fn queues(&self) -> Vec<String>;
-
-    fn exec(&mut self, command: &InterpolatedCommand) -> WorkerResult;
+    fn queues(&self) -> Vec<CommandId>;
 
     /// Execute a given command and return a result
     ///
     /// How does a worker return the result to the daemon?
     /// Callback would require a mutable reference to the daemon itself
-    fn put(&mut self, command: &InterpolatedCommand, result_cb: WorkerReplier) {
-        result_cb.clone().reply(self.exec(command))
-    }
+    fn put(&mut self, command: &InterpolatedCommand, result_cb: WorkerReplier);
 }

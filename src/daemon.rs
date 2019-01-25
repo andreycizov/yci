@@ -6,8 +6,7 @@ use super::obj::*;
 use super::pubsub::*;
 use super::worker::*;
 use std::collections::VecDeque;
-use std::sync::mpsc::Sender;
-use std::sync::mpsc::Receiver;
+use mio_extras::channel::{Sender, Receiver};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Thread {
@@ -100,11 +99,11 @@ impl Default for State {
     }
 }
 
-pub struct DPU<'a> {
+pub struct DPU {
     state: State,
 
     multi_queue: MQ,
-    workers: HashMap<WorkerId, &'a mut Worker>,
+    workers: WS,
     assignment_queue: VecDeque<Ass>,
 }
 
@@ -235,12 +234,12 @@ impl Thread {
     }
 }
 
-impl<'a> Default for DPU<'a> {
+impl Default for DPU {
     fn default() -> Self {
         DPU {
             state: State::default(),
             multi_queue: MQ::default(),
-            workers: HashMap::<WorkerId, &'a mut Worker>::default(),
+            workers: WS::default(),
 
             assignment_queue: VecDeque::<Ass>::default(),
         }
@@ -256,29 +255,30 @@ pub static LOCAL_PAR_CTX: &str = "^ctx";
 pub static LOCAL_PAR_IP: &str = "^ip";
 
 pub(crate) type MQ = MultiQueue<WorkerId, ContextValue, (ThreadId, StepId)>;
+pub(crate) type WS = HashMap<WorkerId, Box<Worker>>;
 pub(crate) type Ass = Assignment<WorkerId, ContextValue, (ThreadId, StepId)>;
 
 pub enum DaemonResponse {
     WorkerCreated(WorkerId),
 }
 
-pub enum DaemonRequest<'a> {
+pub enum DaemonRequest {
     Finished(WorkerId, CommandId, ThreadId, StepId, WorkerResult),
 
     /// worker needs a WorkerId
-    WorkerAdd(&'a mut Worker, Sender<DaemonResponse>),
+    WorkerAdd(Box<Worker>, Sender<DaemonResponse>),
     WorkerRemove(WorkerId),
 }
 
-impl<'a> DPU<'a> {
+impl DPU {
     pub fn get_state_mut(&mut self) -> &mut State {
         &mut self.state
     }
 
     pub(crate) fn worker_add(
         key: &WorkerId,
-        worker: &'a mut Worker,
-        workers: &mut HashMap<WorkerId, &'a mut Worker>,
+        worker: Box<Worker>,
+        workers: &mut WS,
         multi_queue: &mut MQ,
         assignment_queue: &mut VecDeque<Ass>,
     ) -> bool {
@@ -302,13 +302,15 @@ impl<'a> DPU<'a> {
 
     pub(crate) fn worker_remove(
         key: &WorkerId,
-        workers: &mut HashMap<WorkerId, &'a mut Worker>,
+        workers: &mut WS,
         multi_queue: &mut MQ,
         assignment_queue: &mut VecDeque<Ass>,
     ) -> bool {
         match workers.remove(key) {
-            Some(_) => return false,
-            None => {}
+            Some(_) => return true,
+            None => {
+                return false
+            }
         }
 
         for a in multi_queue.worker_remove(key) {
@@ -348,11 +350,11 @@ impl<'a> DPU<'a> {
     }
 
     pub(crate) fn process_channel(
-        receiver: &Receiver<DaemonRequest<'a>>,
+        receiver: &Receiver<DaemonRequest>,
         state: &mut State,
 
         assignment_queue: &mut VecDeque<Ass>,
-        workers: &mut HashMap<WorkerId, &'a mut Worker>,
+        workers: &mut WS,
         multi_queue: &mut MQ,
     ) {
         while let Ok(pkt) = receiver.try_recv() {
@@ -406,7 +408,7 @@ impl<'a> DPU<'a> {
         sender: Sender<DaemonRequest>,
         state: &mut State,
         assignment_queue: &mut VecDeque<Ass>,
-        workers: &mut HashMap<WorkerId, &'a mut Worker>,
+        workers: &mut WS,
     ) {
         let drained = assignment_queue.drain(..);
 

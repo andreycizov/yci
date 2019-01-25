@@ -2,7 +2,6 @@ pub(crate) static TEST_SIMPLE: &str = "./etc/ir/commented_test.ir";
 pub(crate) static TEST_ALGO: &str = "./etc/ir/from_docs.ir";
 pub(crate) static TEST_INCORRECT: &str = "./etc/ir/missing_opcode.ir";
 
-use nom::IResult;
 use crate::prog::*;
 use std::str;
 use std::fs::File;
