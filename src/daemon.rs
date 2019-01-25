@@ -1,4 +1,5 @@
 use rand::prelude::*;
+use serde_derive::{Serialize, Deserialize};
 
 use std::collections::HashMap;
 
@@ -107,7 +108,7 @@ pub struct DPU {
     assignment_queue: VecDeque<Ass>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum RValueLocal {
     Ref(ContextIdent),
     Const(ContextValue),
@@ -128,7 +129,7 @@ impl RValueLocal {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum RValueExtern {
     ContextCreate,
     ThreadCreate(RValueLocal, Option<RValueLocal>),
@@ -163,7 +164,7 @@ impl RValueExtern {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum RValue {
     Local(RValueLocal),
     Extern(RValueExtern),
@@ -182,7 +183,7 @@ impl RValue {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Op {
     LocalSet(ContextIdent, RValue),
 
@@ -193,7 +194,7 @@ pub enum Op {
     ThreadRemove(RValueLocal),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum OpErrReason {
     ContextDoesNotExist { id: ContextId },
     ThreadDoesNotExist { id: ThreadId },
@@ -213,7 +214,7 @@ pub struct OpErr {
     op_reason: OpErrReason,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum WorkerErr {
     Custom(HashMap<String, String>),
     Default(OpErrReason),

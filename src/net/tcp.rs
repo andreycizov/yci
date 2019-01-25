@@ -11,25 +11,45 @@ use std::net::SocketAddr;
 use std::net::AddrParseError;
 use mio::tcp::TcpStream;
 
-use crate::worker::*;
-use crate::obj::*;
-use crate::daemon::*;
+use std::io::Read;
 use std::collections::HashMap;
 use std::time::Duration;
 use std::io::ErrorKind;
 
-use nom::*;
+
+use crate::worker::*;
+use crate::obj::*;
+use crate::daemon::*;
+use crate::net::parser::*;
+use crate::net::util::*;
+
+use std::slice::SliceIndex;
+
+use serde_derive::{Serialize, Deserialize};
+use serde_json::{Error as SerdeError};
+use std::sync::mpsc::TryRecvError;
 
 const TA: Token = Token(0);
 const TB: Token = Token(1);
 const TC: Token = Token(2);
 
 const CLIENT_CAPACITY: usize = 100;
-const CLIENT_BUFFER: usize = 65535 + 4;
+const CLIENT_BUFFER: usize = 65535 + 4 * 5;
 
 enum ClientRq {
     Assign(InterpolatedCommand, WorkerReplier),
     Close,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+enum ClientBkRp {
+    Request(String, InterpolatedCommand)
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+enum ClientBkRq {
+    Header(Option<usize>, Vec<CommandId>),
+    Result(String, WorkerResult)
 }
 
 struct Client {
@@ -39,25 +59,18 @@ struct Client {
     next_idx: usize,
     waiting: HashMap<usize, WorkerReplier>,
     events: Events,
-    buffer: [u8; CLIENT_BUFFER],
+    buffer: StreamingBuffer,
 }
 
 enum ClientRecv {
     Timeout,
     Exit,
-    Err,
-    Messages,
+    Empty,
+    Err(ErrorKind),
+    ErrJson(SerdeError),
+    Backend(ClientBkRq),
+    Frontend(ClientRq),
 }
-
-named!(pub parse_packet_bytes,
-    do_parse!(
-           ty: be_u16
-        >> len: be_u16 // len includes the padding
-        >> data: take!(len)
-        >> (
-            (data)
-        ))
-);
 
 impl Client {
     pub fn new(
@@ -67,8 +80,8 @@ impl Client {
 
         let poll = Poll::new()?;
 
-        poll.register(&stream, TA, Ready::all(), PollOpt::edge())?;
-        poll.register(&cr, TB, Ready::readable(), PollOpt::edge())?;
+        poll.register(&stream, TA, Ready::all(), PollOpt::level())?;
+        poll.register(&cr, TB, Ready::readable(), PollOpt::level())?;
 
         Ok((
             cs,
@@ -79,49 +92,88 @@ impl Client {
                 next_idx: 0,
                 waiting: HashMap::<usize, WorkerReplier>::default(),
                 events: Events::with_capacity(CLIENT_CAPACITY),
-                buffer: [0; CLIENT_BUFFER],
+                buffer: StreamingBuffer::new(CLIENT_BUFFER),
             }
         ))
     }
 
+
     fn recv(&mut self, timeout: Option<Duration>) -> ClientRecv {
-        // WouldBlock
-        // TimedOut
-        match self.poll.poll(&mut self.events, timeout) {
-            Ok(_) => {},
-            Err(err) => match err.kind() {
+         loop {
+            match self.poll.poll(&mut self.events, timeout) {
+                Ok(_) => {}
+                Err(err) => match err.kind() {
                     ErrorKind::TimedOut => {
-                        return ClientRecv::Timeout
+                        return ClientRecv::Timeout;
                     }
-                    _ => return ClientRecv::Err
-            }
-        };
-
-        for event in self.events.iter() {
-            match event.token() {
-                TA => {
-                    //let connected = self.stream.read();
-
-
-
-                    // todo somehow manage the error condition here, possibly needs to go upstream
+                    x => return ClientRecv::Err(x)
                 }
-                TB => {
-                    // The server just shuts down the socket, let's just exit
-                    // from our event loop.
-                    return ClientRecv::Exit;
+            };
+
+            for event in self.events.iter() {
+                match event.token() {
+                    TA => {
+                        match self.stream.read(self.buffer.buf()) {
+                            Ok(x) => {
+                                self.buffer.proceed(x);
+                                if x == 0 {
+                                    break;
+                                }
+                            }
+                            Err(err) => match err.kind() {
+                                ErrorKind::WouldBlock => {
+                                    continue;
+                                }
+                                x => {
+                                    return ClientRecv::Err(x);
+                                }
+                            }
+                        }
+
+                        match self.buffer.try_parse_buffer(parse_packet_bytes) {
+                            Some(x) => {
+                                let pkt = match serde_json::from_slice(x.as_ref()) {
+                                    Ok(x) => x,
+                                    Err(err) => return ClientRecv::ErrJson(err),
+                                };
+
+                                return ClientRecv::Backend(pkt);
+                            }
+                            None => {
+
+                            }
+                        }
+                    }
+                    TB => {
+                        match self.rcvr.try_recv() {
+                            Ok(x) => {
+                                return ClientRecv::Frontend(x)
+                            }
+                            Err(x) => match x {
+                                TryRecvError::Empty => {
+                                    continue
+                                }
+                                TryRecvError::Disconnected => {
+                                    return ClientRecv::Exit
+                                }
+                            }
+                        }
+                    }
+                    _ => unreachable!(),
                 }
-                _ => unreachable!(),
             }
         }
 
-        return ClientRecv::Messages;
+
+
+//        return ClientRecv::Messages;
+        return ClientRecv::Exit;
     }
 
     pub fn run(&mut self, l_sndr: Sender<ListenerRq>) {
         // todo client negotiate with the client <capacity, vec<string>>, send it to TCPListener
 
-
+        self.recv(Some(Duration::new(1, 0)));
     }
 }
 
@@ -147,7 +199,7 @@ impl Worker for ClientFw {
 
 enum ListenerRq {
     Negotiated(Sender<ClientRq>, Option<usize>, Vec<CommandId>),
-    Kill
+    Kill,
 }
 
 struct Listener {

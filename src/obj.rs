@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use serde_derive::{Serialize, Deserialize};
 
 pub type Id = u128;
 pub type GenId = String;
@@ -41,7 +42,7 @@ pub struct Command {
     pub(crate) args: Vec<CommandArgument>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InterpolatedCommand {
     pub(crate) id: CommandId,
     pub(crate) opcode: InterpolatedCommandArgument,
@@ -72,7 +73,7 @@ pub enum CommandArgument {
 }
 
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum InterpolatedCommandArgument {
     Const(ContextValue),
     Ref(ContextIdent, ContextValue),

@@ -2,6 +2,9 @@ extern crate uuid;
 extern crate rand;
 extern crate mio;
 extern crate mio_extras;
+extern crate serde;
+extern crate serde_json;
+extern crate serde_derive;
 
 use std::collections::HashMap;
 
