@@ -8,7 +8,7 @@ use crate::net::util::*;
 fn test_tcp_parser_a() {
     assert_eq!(
         parse_packet_bytes(b"\x01\x00a"),
-        Ok((b"".as_ref(), b"a".as_ref()))
+        Ok((b"".as_ref(), b"a".to_vec()))
     );
 }
 
@@ -16,7 +16,7 @@ fn test_tcp_parser_a() {
 fn test_tcp_parser_b() {
     assert_eq!(
         parse_packet_bytes(b"\x01\x00ab"),
-        Ok((b"b".as_ref(), b"a".as_ref()))
+        Ok((b"b".as_ref(), b"a".to_vec()))
     );
 }
 
@@ -30,29 +30,23 @@ fn test_tcp_parser_c() {
 
 #[test]
 fn test_streaming_buffer() {
-    let mut b = StreamingBuffer::new(100);
+    let mut b = StreamingBuffer::new(parse_packet_bytes, 100);
 
     b.buf()[0] = 1;
     b.buf()[2] = b'\x66';
 
-    let x = b.try_parse_buffer(
-        parse_packet_bytes
-    );
+    let x = b.try_parse_buffer();
 
     assert_eq!(x, None);
 
 
     b.proceed(6);
 
-    let x = b.try_parse_buffer(
-        parse_packet_bytes
-    );
+    let x = b.try_parse_buffer();
 
     assert_eq!(x, Some(vec![b'\x66']));
 
-    let x = b.try_parse_buffer(
-        parse_packet_bytes
-    );
+    let x = b.try_parse_buffer();
 
     assert_eq!(x, Some(vec![]));
 
@@ -62,9 +56,7 @@ fn test_streaming_buffer() {
 
     b.proceed(10);
 
-    let x = b.try_parse_buffer(
-        parse_packet_bytes
-    );
+    let x = b.try_parse_buffer();
 
     assert_eq!(x, Some(vec![b'\x66', b'\x66']));
 }

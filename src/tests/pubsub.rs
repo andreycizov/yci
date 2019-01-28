@@ -56,7 +56,7 @@ fn test_multi_queue_a() {
         vec![],
     );
 
-    let ops2 = a.worker_add("a".to_string(), Some(2), vec![1, 2, 3]);
+    let ops2 = a.worker_add("a".to_string(), Some(2), &vec![1, 2, 3]);
 
     assert_eq!(
         ops2,
@@ -82,7 +82,7 @@ fn test_multi_queue_b() {
         vec![],
     );
 
-    let ops2 = a.worker_add("a".to_string(), Some(2), vec![1, 2, 3]);
+    let ops2 = a.worker_add("a".to_string(), Some(2), &vec![1, 2, 3]);
 
     assert_eq!(
         ops2,
@@ -118,7 +118,7 @@ fn test_multi_queue_c() {
         vec![],
     );
 
-    let ops2 = a.worker_add("a".to_string(), Some(2), vec![1, 2, 3]);
+    let ops2 = a.worker_add("a".to_string(), Some(2), &vec![1, 2, 3]);
 
     assert_eq!(
         ops2,
@@ -154,7 +154,7 @@ fn test_multi_queue_d() {
         vec![],
     );
 
-    let ops2 = a.worker_add("a".to_string(), Some(2), vec![1, 2, 3]);
+    let ops2 = a.worker_add("a".to_string(), Some(2), &vec![1, 2, 3]);
 
     assert_eq!(
         ops2,
@@ -207,7 +207,7 @@ fn test_multi_queue_e() {
         vec![],
     );
 
-    let ops2 = a.worker_add("a".to_string(), Some(2), vec![1, 2, 3]);
+    let ops2 = a.worker_add("a".to_string(), Some(2), &vec![1, 2, 3]);
 
     assert_eq!(
         ops2,
@@ -217,7 +217,7 @@ fn test_multi_queue_e() {
         ],
     );
 
-    let ops3 = a.worker_add("b".to_string(), Some(1), vec![1, 2, 3]);
+    let ops3 = a.worker_add("b".to_string(), Some(1), &vec![1, 2, 3]);
 
     assert_eq!(
         ops3,
@@ -259,7 +259,7 @@ fn test_multi_queue_cancel_job() {
 #[test]
 fn test_multi_queue_cancel() {
     let mut a = MultiQueue::<String, u32, Jobs>::default();
-    let ops2 = a.worker_add("a".to_string(), None, vec![1, 2, 3]);
+    let ops2 = a.worker_add("a".to_string(), None, &vec![1, 2, 3]);
 
     let ops = a.job_create(&1, &Jobs::A);
 
@@ -291,7 +291,7 @@ fn test_multi_queue_cancel() {
         ],
     );
 
-    let mut ops = a.worker_add("b".to_string(), None, vec![1, 2, 3]);
+    let mut ops = a.worker_add("b".to_string(), None, &vec![1, 2, 3]);
 
     ops.sort_by_key(|x| (x.queue_key.clone(), x.job_key.clone()));
 

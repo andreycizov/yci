@@ -256,18 +256,33 @@ pub static LOCAL_PAR_CTX: &str = "^ctx";
 pub static LOCAL_PAR_IP: &str = "^ip";
 
 pub(crate) type MQ = MultiQueue<WorkerId, ContextValue, (ThreadId, StepId)>;
-pub(crate) type WS = HashMap<WorkerId, Box<Worker>>;
+pub(crate) type WS = HashMap<WorkerId, DaemonWorkerInfo>;
 pub(crate) type Ass = Assignment<WorkerId, ContextValue, (ThreadId, StepId)>;
 
-pub enum DaemonResponse {
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WorkerInfo {
+    pub(crate) capacity: Option<usize>,
+    pub(crate) queues: Vec<String>,
+}
+
+#[derive(Clone)]
+pub struct DaemonWorkerInfo {
+    key: WorkerId,
+    info: WorkerInfo,
+    stream: Sender<DaemonWorker>,
+}
+
+#[derive(Clone, Debug)]
+pub enum DaemonWorker {
     WorkerCreated(WorkerId),
+    JobAssigned(CommandId, ThreadId, StepId, InterpolatedCommand),
 }
 
 pub enum DaemonRequest {
     Finished(WorkerId, CommandId, ThreadId, StepId, WorkerResult),
 
     /// worker needs a WorkerId
-    WorkerAdd(Box<Worker>, Sender<DaemonResponse>),
+    WorkerAdd(WorkerInfo, Sender<DaemonWorker>),
     WorkerRemove(WorkerId),
 }
 
@@ -278,13 +293,17 @@ impl DPU {
 
     pub(crate) fn worker_add(
         key: &WorkerId,
-        worker: Box<Worker>,
+        info: &WorkerInfo,
+        stream: &Sender<DaemonWorker>,
         workers: &mut WS,
         multi_queue: &mut MQ,
         assignment_queue: &mut VecDeque<Ass>,
     ) -> bool {
-        let capa = worker.capacity().clone();
-        let queues = worker.queues().clone();
+        let worker = DaemonWorkerInfo {
+            key: key.clone(),
+            info: info.clone(),
+            stream: stream.clone(),
+        };
         match workers.insert(key.clone(), worker) {
             Some(_) => return true,
             None => {}
@@ -292,11 +311,13 @@ impl DPU {
 
         for a in multi_queue.worker_add(
             key.clone(),
-            capa,
-            queues,
+            info.capacity,
+            &info.queues,
         ) {
             assignment_queue.push_back(a)
         };
+
+        stream.send(DaemonWorker::WorkerCreated(key.clone()));
 
         false
     }
@@ -376,18 +397,17 @@ impl DPU {
                         multi_queue,
                     )
                 }
-                DaemonRequest::WorkerAdd(wrkr, reply_to) => {
+                DaemonRequest::WorkerAdd(info, chan_rep) => {
                     let id = state.create_id();
 
                     DPU::worker_add(
                         &id,
-                        wrkr,
+                        &info,
+                        &chan_rep,
                         workers,
                         multi_queue,
                         assignment_queue,
                     );
-
-                    reply_to.send(DaemonResponse::WorkerCreated(id));
                 }
                 DaemonRequest::WorkerRemove(wrkr) => {
                     DPU::worker_remove(
@@ -430,7 +450,7 @@ impl DPU {
 
             assert_eq!(step_id, thread.step);
 
-            worker.put(command, WorkerReplier::new(ass.worker_key, ass.queue_key, thread_id, step_id, sender.clone()))
+            worker.stream.send(DaemonWorker::JobAssigned(command.id.clone(), thread_id, step_id, command.clone()));
         }
     }
 

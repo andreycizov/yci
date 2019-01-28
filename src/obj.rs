@@ -60,7 +60,6 @@ impl InterpolatedCommand {
             opcode,
             args,
         }
-
     }
 }
 
@@ -147,7 +146,3 @@ impl Command {
         })
     }
 }
-
-
-
-

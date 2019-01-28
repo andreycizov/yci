@@ -273,7 +273,7 @@ impl<WK: Clone + Eq + Hash, QK: Clone + Eq + Hash, JK: Clone + Eq + Hash> MultiQ
         }
     }
 
-    pub fn worker_add(&mut self, key: WK, capacity: Option<usize>, queues: Vec<QK>) -> Vec<Assignment<WK, QK, JK>> {
+    pub fn worker_add(&mut self, key: WK, capacity: Option<usize>, queues: &Vec<QK>) -> Vec<Assignment<WK, QK, JK>> {
         match self.worker_queues.get(&key) {
             Some(_x) => panic!("worker already exists"),
             None => {}

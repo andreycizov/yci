@@ -59,13 +59,14 @@ struct Client {
     next_idx: usize,
     waiting: HashMap<usize, WorkerReplier>,
     events: Events,
-    buffer: StreamingBuffer,
+    buffer: StreamingBuffer<Vec<u8>>,
 }
 
 enum ClientRecv {
     Timeout,
     Exit,
     Empty,
+    Disconnected,
     Err(ErrorKind),
     ErrJson(SerdeError),
     Backend(ClientBkRq),
@@ -83,6 +84,8 @@ impl Client {
         poll.register(&stream, TA, Ready::all(), PollOpt::level())?;
         poll.register(&cr, TB, Ready::readable(), PollOpt::level())?;
 
+        let buffer = StreamingBuffer::new(parse_packet_bytes, CLIENT_BUFFER);
+        // todo client actually needs to register first by creating Box<ClientFw>
         Ok((
             cs,
             Client {
@@ -92,13 +95,14 @@ impl Client {
                 next_idx: 0,
                 waiting: HashMap::<usize, WorkerReplier>::default(),
                 events: Events::with_capacity(CLIENT_CAPACITY),
-                buffer: StreamingBuffer::new(CLIENT_BUFFER),
+                buffer: buffer,
             }
         ))
     }
 
-
     fn recv(&mut self, timeout: Option<Duration>) -> ClientRecv {
+        /// timeout, error, disconnected
+
          loop {
             match self.poll.poll(&mut self.events, timeout) {
                 Ok(_) => {}
@@ -113,12 +117,12 @@ impl Client {
             for event in self.events.iter() {
                 match event.token() {
                     TA => {
-                        match self.stream.read(self.buffer.buf()) {
+                        match self.stream.parse_read(&mut self.buffer) {
                             Ok(x) => {
-                                self.buffer.proceed(x);
                                 if x == 0 {
-                                    break;
+                                    return ClientRecv::Disconnected;
                                 }
+                                self.buffer.proceed(x);
                             }
                             Err(err) => match err.kind() {
                                 ErrorKind::WouldBlock => {
@@ -130,7 +134,7 @@ impl Client {
                             }
                         }
 
-                        match self.buffer.try_parse_buffer(parse_packet_bytes) {
+                        match self.buffer.try_parse_buffer() {
                             Some(x) => {
                                 let pkt = match serde_json::from_slice(x.as_ref()) {
                                     Ok(x) => x,
@@ -154,7 +158,7 @@ impl Client {
                                     continue
                                 }
                                 TryRecvError::Disconnected => {
-                                    return ClientRecv::Exit
+                                    return ClientRecv::Disconnected
                                 }
                             }
                         }
@@ -170,7 +174,7 @@ impl Client {
         return ClientRecv::Exit;
     }
 
-    pub fn run(&mut self, l_sndr: Sender<ListenerRq>) {
+    pub fn run(&mut self) {
         // todo client negotiate with the client <capacity, vec<string>>, send it to TCPListener
 
         self.recv(Some(Duration::new(1, 0)));
@@ -178,6 +182,7 @@ impl Client {
 }
 
 struct ClientFw {
+    // whenever this is dropped, the Client needs to be dropped too
     sndr: Sender<ClientRq>,
     capacity: Option<usize>,
     queues: Vec<CommandId>,
@@ -258,8 +263,10 @@ impl Listener {
         for event in self.events.iter() {
             match event.token() {
                 tok_listener => {
-                    let connected = self.listener.accept();
+                    let (connected, _) = self.listener.accept().unwrap();
+                    let (client_reply_channel, mut c) = Client::new(connected).unwrap();
 
+                    spawn(move || { c.run() });
                     // todo somehow manage the error condition here, possibly needs to go upstream
                 }
                 tok_exit => {

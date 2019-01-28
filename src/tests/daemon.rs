@@ -30,16 +30,17 @@ mod tests {
                 )
             ].iter()
         );
-        
+
         let state = dpu.get_state_mut();
         let ctx = Context::empty(state.create_id());
         state.insert_context(&ctx);
-        
+
         let thr = Thread::create(
             state.create_id(),
             "0".to_string(),
             Some(ctx.id)
         );
+
     }
 
     fn create_machine_err() {
@@ -69,11 +70,11 @@ mod tests {
                 )
             ].iter()
         );
-    
+
         let state = dpu.get_state_mut();
         let ctx = Context::empty(state.create_id());
         state.insert_context(&ctx);
-    
+
         let thr = Thread::create(
             state.create_id(),
             "0".to_string(),

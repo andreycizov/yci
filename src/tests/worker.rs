@@ -3,9 +3,14 @@ use crate::daemon::*;
 use crate::obj::*;
 use crate::tests::prog::*;
 use crate::worker::*;
-use mio_extras::channel::channel;
+use mio_extras::channel::{Sender, Receiver, channel};
 
-struct W1 {}
+struct W1 {
+    rx: Receiver<DaemonWorker>,
+    tx: Sender<DaemonWorker>,
+    rep: Sender<DaemonRequest>,
+    wid: Option<WorkerId>,
+}
 
 impl W1 {
     fn exec(&mut self, command: &InterpolatedCommand) -> WorkerResult {
@@ -230,6 +235,25 @@ impl W1 {
             }
         }
     }
+
+    fn run(&mut self) -> usize {
+        let mut i = 0;
+        while let Ok(x) = self.rx.try_recv() {
+            println!("{:?}", x);
+            match x {
+                DaemonWorker::WorkerCreated(wid) => {
+                    self.wid = Some(dbg!(wid));
+                }
+                DaemonWorker::JobAssigned(cid, tid, sid, cmd) => {
+                    let ret = self.exec(&cmd);
+
+                    self.rep.send(DaemonRequest::Finished(self.wid.clone().unwrap(), cid, tid, sid, ret));
+                    i += 1;
+                }
+            }
+        }
+        i
+    }
 }
 
 impl Worker for W1 {
@@ -267,6 +291,8 @@ fn test_worker_a() {
 
     state.insert_commands(ir.iter());
 
+    let (tx, rx) = channel::<DaemonRequest>();
+
     let thread_id = DPU::job_add(
         "ep".into(),
         None,
@@ -274,15 +300,22 @@ fn test_worker_a() {
         &mut assignment_queue,
         &mut multi_queue,
     );
+    let (wtx, wrx) = channel();
 
-    let mut wo = W1 {};
-
-    let (tx, rx) = channel::<DaemonRequest>();
-
+    let mut wo = W1 {
+        rx: wrx,
+        tx: wtx,
+        rep: tx.clone(),
+        wid: None
+    };
 
     DPU::worker_add(
         &"1".into(),
-        Box::new(wo),
+        &WorkerInfo {
+            capacity: wo.capacity(),
+            queues: wo.queues(),
+        },
+        &wo.tx,
         &mut workers,
         &mut multi_queue,
         &mut assignment_queue,
@@ -304,6 +337,9 @@ fn test_worker_a() {
             &mut workers,
             &mut multi_queue,
         );
+        for i in 0..100 {
+            wo.run();
+        }
     }
 
     assert_eq!(
