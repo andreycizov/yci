@@ -26,7 +26,7 @@ use crate::net::util::*;
 use std::slice::SliceIndex;
 
 use serde_derive::{Serialize, Deserialize};
-use serde_json::{Error as SerdeError};
+use serde_json::Error as SerdeError;
 use std::sync::mpsc::TryRecvError;
 
 const TA: Token = Token(0);
@@ -49,7 +49,7 @@ enum ClientBkRp {
 #[derive(Serialize, Deserialize, Debug)]
 enum ClientBkRq {
     Header(Option<usize>, Vec<CommandId>),
-    Result(String, WorkerResult)
+    Result(String, WorkerResult),
 }
 
 struct Client {
@@ -103,7 +103,7 @@ impl Client {
     fn recv(&mut self, timeout: Option<Duration>) -> ClientRecv {
         /// timeout, error, disconnected
 
-         loop {
+        loop {
             match self.poll.poll(&mut self.events, timeout) {
                 Ok(_) => {}
                 Err(err) => match err.kind() {
@@ -143,22 +143,20 @@ impl Client {
 
                                 return ClientRecv::Backend(pkt);
                             }
-                            None => {
-
-                            }
+                            None => {}
                         }
                     }
                     TB => {
                         match self.rcvr.try_recv() {
                             Ok(x) => {
-                                return ClientRecv::Frontend(x)
+                                return ClientRecv::Frontend(x);
                             }
                             Err(x) => match x {
                                 TryRecvError::Empty => {
-                                    continue
+                                    continue;
                                 }
                                 TryRecvError::Disconnected => {
-                                    return ClientRecv::Disconnected
+                                    return ClientRecv::Disconnected;
                                 }
                             }
                         }
@@ -167,7 +165,6 @@ impl Client {
                 }
             }
         }
-
 
 
 //        return ClientRecv::Messages;
@@ -209,27 +206,36 @@ enum ListenerRq {
 
 struct Listener {
     listener: TcpListener,
+    master_tx: Sender<DaemonRequest>,
     poll: Poll,
     d_sndr: Sender<TCPWorkerAdapterRq>,
     l_rcvr: Receiver<ListenerRq>,
     events: Events,
 }
 
+const TOKEN_LISTENER: Token = Token(0);
+const TOKEN_EXIT: Token = Token(1);
+
 impl Listener {
-    fn new(addr: SocketAddr, d_sndr: Sender<TCPWorkerAdapterRq>, l_rcvr: Receiver<ListenerRq>) -> Result<Listener, Error> {
+    fn new(
+        addr: SocketAddr,
+        master_tx: Sender<DaemonRequest>,
+        d_sndr: Sender<TCPWorkerAdapterRq>,
+        l_rcvr: Receiver<ListenerRq>,
+    ) -> Result<Listener, Error> {
         let listener = TcpListener::bind(&addr)?;
 
         let poll = Poll::new()?;
 
-        let tok_listener = Token(0);
-        let tok_exit = Token(1);
 
-        poll.register(&listener, tok_listener, Ready::readable(), PollOpt::edge())?;
-        poll.register(&l_rcvr, tok_exit, Ready::readable(), PollOpt::edge())?;
+
+        poll.register(&listener, TOKEN_LISTENER, Ready::readable(), PollOpt::edge())?;
+        poll.register(&l_rcvr, TOKEN_EXIT, Ready::readable(), PollOpt::edge())?;
 
         return Ok(
             Listener {
                 listener,
+                master_tx,
                 poll,
                 d_sndr,
                 l_rcvr,
@@ -238,47 +244,39 @@ impl Listener {
         );
     }
 
-    pub fn run(
-        addr: SocketAddr,
-        d_sndr: Sender<TCPWorkerAdapterRq>,
-        l_rcvr: Receiver<ListenerRq>,
-        ep_sndr: Sender<Option<Error>>,
-    ) {
-        let mut listener = match Listener::new(addr, d_sndr, l_rcvr) {
-            Ok(x) => x,
-            Err(err) => {
-                ep_sndr.send(Some(err));
-                return;
+    pub fn run(&mut self) {
+        while match self.once() {
+            Ok(x) => { x },
+            Err(x) => {
+                dbg!(x);
+                false
             }
-        };
-
-        ep_sndr.send(None);
-
-        while listener.once() {}
+        } {}
     }
 
-    pub fn once(&mut self) -> bool {
+    pub fn once(&mut self) -> Result<bool, Error> {
         self.poll.poll(&mut self.events, None).unwrap();
 
         for event in self.events.iter() {
             match event.token() {
-                tok_listener => {
+                TOKEN_LISTENER => {
                     let (connected, _) = self.listener.accept().unwrap();
                     let (client_reply_channel, mut c) = Client::new(connected).unwrap();
 
                     spawn(move || { c.run() });
+                    // todo how do we manage error conditions spawned in threads?
                     // todo somehow manage the error condition here, possibly needs to go upstream
                 }
-                tok_exit => {
+                TOKEN_EXIT => {
                     // The server just shuts down the socket, let's just exit
                     // from our event loop.
-                    return false;
+                    return Ok(false);
                 }
                 _ => unreachable!(),
             }
         }
 
-        return true;
+        return Ok(true);
     }
 }
 
@@ -286,6 +284,12 @@ impl Listener {
 pub enum TCPWorkerAdapterError {
     Address(AddrParseError),
     IO(Error),
+}
+
+impl From<Error> for TCPWorkerAdapterError {
+    fn from(x: Error) -> Self {
+        TCPWorkerAdapterError::IO(x)
+    }
 }
 
 pub enum TCPWorkerAdapterRq {
@@ -296,14 +300,13 @@ pub enum TCPWorkerAdapterRq {
 
 pub struct TCPWorkerAdapter {
     /// create new workers as they are received on the channel?
-    daemon: Sender<DaemonRequest>,
     listener: Sender<ListenerRq>,
 }
 
 impl TCPWorkerAdapter {
     /// Should own the WorkerForwarders (they will go away with it).
 
-    pub fn new(addr: &str, daemon_chan: Sender<DaemonRequest>) -> Result<Self, TCPWorkerAdapterError> {
+    pub fn new(addr: &str, master_tx: Sender<DaemonRequest>) -> Result<Self, TCPWorkerAdapterError> {
         let (l_sndr, l_rcvr) = channel::<ListenerRq>();
         let (d_sndr, d_rcvr) = channel::<TCPWorkerAdapterRq>();
 
@@ -313,14 +316,20 @@ impl TCPWorkerAdapter {
 
         // todo who owns the workers created by the ListenerThread ?
 
-        spawn(move || { Listener::run(addr, d_sndr, l_rcvr, ep_sndr) });
+        let mut listener = Listener::new(addr, master_tx, d_sndr, l_rcvr)?;
+
+        spawn(move || { listener.run() });
 
         let poll = Poll::new().unwrap();
         let mut events = Events::with_capacity(1);
 
-        poll.register(&ep_rcvr, Token(0), Ready::readable(), PollOpt::edge()).unwrap();
+        poll.register(&ep_rcvr, Token(0), Ready::readable(), PollOpt::edge())?;
 
-        let n = poll.poll(&mut events, None).unwrap();
+        // we wait only one second for the thread to start, otherwise it doesn't make much sense to wait.
+        let n = poll.poll(
+            &mut events,
+            Some(Duration::from_secs(1)),
+        ).unwrap();
 
         assert_eq!(n, 1);
 
@@ -332,7 +341,6 @@ impl TCPWorkerAdapter {
         };
 
         Ok(TCPWorkerAdapter {
-            daemon: daemon_chan,
             listener: l_sndr.clone(),
         })
     }
