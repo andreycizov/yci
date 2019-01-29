@@ -11,10 +11,12 @@ use std::net::SocketAddr;
 use std::net::AddrParseError;
 use mio::tcp::TcpStream;
 
-use std::io::Read;
+use std::io::{Write, Read};
 use std::collections::HashMap;
 use std::time::Duration;
 use std::io::ErrorKind;
+
+use bytes;
 
 
 use crate::worker::*;
@@ -28,6 +30,8 @@ use std::slice::SliceIndex;
 use serde_derive::{Serialize, Deserialize};
 use serde_json::Error as SerdeError;
 use std::sync::mpsc::TryRecvError;
+use std::fmt::Debug;
+use bytes::BigEndian;
 
 const TA: Token = Token(0);
 const TB: Token = Token(1);
@@ -36,68 +40,79 @@ const TC: Token = Token(2);
 const CLIENT_CAPACITY: usize = 100;
 const CLIENT_BUFFER: usize = 65535 + 4 * 5;
 
-enum ClientRq {
-    Assign(InterpolatedCommand, WorkerReplier),
-    Close,
-}
 
 #[derive(Serialize, Deserialize, Debug)]
-enum ClientBkRp {
+pub enum ClientBkRp {
     Request(String, InterpolatedCommand)
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-enum ClientBkRq {
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+pub enum ClientBkRq {
     Header(Option<usize>, Vec<CommandId>),
     Result(String, WorkerResult),
 }
 
 struct Client {
     poll: Poll,
-    stream: TcpStream,
-    rcvr: Receiver<ClientRq>,
+    master_tx: Sender<DaemonRequest>,
+    bk: ParsingStream<TcpStream, ClientBkRq, ClientBkRp, SerdeError>,
+    tx: Sender<DaemonWorker>,
+    rx: Receiver<DaemonWorker>,
     next_idx: usize,
     waiting: HashMap<usize, WorkerReplier>,
     events: Events,
-    buffer: StreamingBuffer<Vec<u8>>,
 }
 
 enum ClientRecv {
     Timeout,
-    Exit,
-    Empty,
     Disconnected,
     Err(ErrorKind),
     ErrJson(SerdeError),
     Backend(ClientBkRq),
-    Frontend(ClientRq),
+    Frontend(DaemonWorker),
+}
+
+pub fn err_sink<Err: Debug, R, F>(f: F) -> Result<R, Err>
+    where F: FnOnce() -> Result<R, Err> {
+    match f() {
+        Ok(x) => Ok(x),
+        Err(err) => {
+            Err(dbg!(err))
+        }
+    }
 }
 
 impl Client {
     pub fn new(
+        master_tx: Sender<DaemonRequest>,
         stream: TcpStream,
-    ) -> Result<(Sender<ClientRq>, Self), Error> {
-        let (cs, cr) = channel::<ClientRq>();
+    ) -> Result<Self, Error> {
+        let (tx, rx) = channel::<DaemonWorker>();
 
         let poll = Poll::new()?;
 
         poll.register(&stream, TA, Ready::all(), PollOpt::level())?;
-        poll.register(&cr, TB, Ready::readable(), PollOpt::level())?;
+        poll.register(&rx, TB, Ready::readable(), PollOpt::level())?;
 
         let buffer = StreamingBuffer::new(parse_packet_bytes, CLIENT_BUFFER);
+        let bk = ParsingStream::new(
+            stream,
+            buffer,
+            unparse_packet_bytes
+        );
         // todo client actually needs to register first by creating Box<ClientFw>
-        Ok((
-            cs,
+        Ok(
             Client {
                 poll,
-                stream,
-                rcvr: cr,
+                master_tx,
+                bk,
+                tx,
+                rx,
                 next_idx: 0,
                 waiting: HashMap::<usize, WorkerReplier>::default(),
                 events: Events::with_capacity(CLIENT_CAPACITY),
-                buffer: buffer,
             }
-        ))
+        )
     }
 
     fn recv(&mut self, timeout: Option<Duration>) -> ClientRecv {
@@ -110,44 +125,20 @@ impl Client {
                     ErrorKind::TimedOut => {
                         return ClientRecv::Timeout;
                     }
-                    x => return ClientRecv::Err(x)
+                    x => return ClientRecv::Disconnected,
                 }
             };
 
             for event in self.events.iter() {
                 match event.token() {
                     TA => {
-                        match self.stream.parse_read(&mut self.buffer) {
-                            Ok(x) => {
-                                if x == 0 {
-                                    return ClientRecv::Disconnected;
-                                }
-                                self.buffer.proceed(x);
-                            }
-                            Err(err) => match err.kind() {
-                                ErrorKind::WouldBlock => {
-                                    continue;
-                                }
-                                x => {
-                                    return ClientRecv::Err(x);
-                                }
-                            }
-                        }
-
-                        match self.buffer.try_parse_buffer() {
-                            Some(x) => {
-                                let pkt = match serde_json::from_slice(x.as_ref()) {
-                                    Ok(x) => x,
-                                    Err(err) => return ClientRecv::ErrJson(err),
-                                };
-
-                                return ClientRecv::Backend(pkt);
-                            }
-                            None => {}
+                        match self.bk.try_recv() {
+                            Ok(x) => return ClientRecv::Backend(x),
+                            Err(err) => return ClientRecv::Disconnected,
                         }
                     }
                     TB => {
-                        match self.rcvr.try_recv() {
+                        match self.rx.try_recv() {
                             Ok(x) => {
                                 return ClientRecv::Frontend(x);
                             }
@@ -165,42 +156,102 @@ impl Client {
                 }
             }
         }
-
-
-//        return ClientRecv::Messages;
-        return ClientRecv::Exit;
     }
 
-    pub fn run(&mut self) {
+    fn run_loop(&mut self, key: &String) -> Result<bool, TCPWorkerAdapterError> {
+        let mut ctr = 0;
+        let mut commands = HashMap::<String, (ThreadId, StepId, CommandId)>::default();
+
+        loop {
+            match self.recv(None) {
+                ClientRecv::Backend(x) => {
+                    match x {
+                        ClientBkRq::Result(cmd_id, res) => {
+                            if let Some((tid, sid, cid)) = commands.remove(&cmd_id) {
+                                self.master_tx.send(
+                                    DaemonRequest::Finished(
+                                        key.clone(),
+                                        tid,
+                                        sid,
+                                        cid,
+                                        res,
+                                    )
+                                );
+                            } else {
+                                return Err(TCPWorkerAdapterError::from("unknown command response"));
+                            }
+                        }
+                        _ => return Err(TCPWorkerAdapterError::from("bk: unknown message"))
+                    }
+                }
+                ClientRecv::Frontend(x) => {
+                    match x {
+                        DaemonWorker::JobAssigned(tid, sid, cid, cmd) => {
+                            let cmd_key = ctr.to_string();
+                            commands.insert(
+                                cmd_key.clone(),
+                                (tid, sid, cid)
+                            );
+
+                            let req = &ClientBkRp::Request(
+                                cmd_key.clone(),
+                                cmd,
+                            );
+
+                            self.bk.send(req).map_err(|_| "could not send buf")?;
+
+                            ctr += 1;
+                        }
+                        _ => return Err(TCPWorkerAdapterError::from("fr: unknown message"))
+                    }
+                }
+                ClientRecv::Disconnected => {
+                    return Ok(true)
+                }
+                _ => return Err(TCPWorkerAdapterError::from("both: unexpected"))
+            }
+        }
+    }
+
+    pub fn run(&mut self) -> Result<bool, TCPWorkerAdapterError> {
         // todo client negotiate with the client <capacity, vec<string>>, send it to TCPListener
 
-        self.recv(Some(Duration::new(1, 0)));
-    }
-}
+        match self.recv(Some(Duration::new(1, 0))) {
+            ClientRecv::Backend(x) => {
+                match x {
+                    ClientBkRq::Header(capacity, queues) => {
+                        self.master_tx.send(
+                            DaemonRequest::WorkerAdd(
+                                WorkerInfo { capacity, queues },
+                                self.tx.clone(),
+                            )
+                        ).map_err(|_| "could not reach master")?;
+                    }
+                    _ => return Err(TCPWorkerAdapterError::from("header not received in time"))
+                }
+            }
+            _ => return Err(TCPWorkerAdapterError::from("protocol error"))
+        };
 
-struct ClientFw {
-    // whenever this is dropped, the Client needs to be dropped too
-    sndr: Sender<ClientRq>,
-    capacity: Option<usize>,
-    queues: Vec<CommandId>,
-}
+        let key = match self.recv(None) {
+            ClientRecv::Frontend(x) => {
+                match x {
+                    DaemonWorker::WorkerCreated(key) => { key }
+                    _ => return Err(TCPWorkerAdapterError::from("worker could not be created"))
+                }
+            }
+            _ => return Err(TCPWorkerAdapterError::from("protocol error"))
+        };
 
-impl Worker for ClientFw {
-    fn capacity(&self) -> Option<usize> {
-        self.capacity
-    }
+        let res = self.run_loop(&key);
 
-    fn queues(&self) -> Vec<CommandId> {
-        self.queues.clone()
-    }
+        self.master_tx.send(DaemonRequest::WorkerRemove(key));
 
-    fn put(&mut self, command: &InterpolatedCommand, result_cb: WorkerReplier) {
-        self.sndr.send(ClientRq::Assign(command.clone(), result_cb));
+        res
     }
 }
 
 enum ListenerRq {
-    Negotiated(Sender<ClientRq>, Option<usize>, Vec<CommandId>),
     Kill,
 }
 
@@ -228,7 +279,6 @@ impl Listener {
         let poll = Poll::new()?;
 
 
-
         poll.register(&listener, TOKEN_LISTENER, Ready::readable(), PollOpt::edge())?;
         poll.register(&l_rcvr, TOKEN_EXIT, Ready::readable(), PollOpt::edge())?;
 
@@ -244,39 +294,33 @@ impl Listener {
         );
     }
 
-    pub fn run(&mut self) {
-        while match self.once() {
-            Ok(x) => { x },
-            Err(x) => {
-                dbg!(x);
-                false
-            }
-        } {}
-    }
-
-    pub fn once(&mut self) -> Result<bool, Error> {
+    pub fn run(&mut self) -> Result<bool, Error> {
         self.poll.poll(&mut self.events, None).unwrap();
 
-        for event in self.events.iter() {
-            match event.token() {
-                TOKEN_LISTENER => {
-                    let (connected, _) = self.listener.accept().unwrap();
-                    let (client_reply_channel, mut c) = Client::new(connected).unwrap();
+        loop {
+            for event in self.events.iter() {
+                match event.token() {
+                    TOKEN_LISTENER => {
+                        let (connected, _) = self.listener.accept()?;
+                        let mut c = Client::new(self.master_tx.clone(), connected)?;
 
-                    spawn(move || { c.run() });
-                    // todo how do we manage error conditions spawned in threads?
-                    // todo somehow manage the error condition here, possibly needs to go upstream
+                        spawn(move || err_sink(|| c.run()));
+                        // todo how do we manage error conditions spawned in threads?
+                        // todo somehow manage the error condition here, possibly needs to go upstream
+                    }
+                    TOKEN_EXIT => {
+                        // The server just shuts down the socket, let's just exit
+                        // from our event loop.
+
+                        // todo we need to tell all of the threads that are still running to shut down.
+                        // todo although instead the Master could tell that to them.
+
+                        return Ok(false);
+                    }
+                    _ => unreachable!(),
                 }
-                TOKEN_EXIT => {
-                    // The server just shuts down the socket, let's just exit
-                    // from our event loop.
-                    return Ok(false);
-                }
-                _ => unreachable!(),
             }
         }
-
-        return Ok(true);
     }
 }
 
@@ -284,6 +328,13 @@ impl Listener {
 pub enum TCPWorkerAdapterError {
     Address(AddrParseError),
     IO(Error),
+    Str(String),
+}
+
+impl From<&str> for TCPWorkerAdapterError {
+    fn from(x: &str) -> Self {
+        TCPWorkerAdapterError::Str(x.to_string())
+    }
 }
 
 impl From<Error> for TCPWorkerAdapterError {
@@ -318,27 +369,7 @@ impl TCPWorkerAdapter {
 
         let mut listener = Listener::new(addr, master_tx, d_sndr, l_rcvr)?;
 
-        spawn(move || { listener.run() });
-
-        let poll = Poll::new().unwrap();
-        let mut events = Events::with_capacity(1);
-
-        poll.register(&ep_rcvr, Token(0), Ready::readable(), PollOpt::edge())?;
-
-        // we wait only one second for the thread to start, otherwise it doesn't make much sense to wait.
-        let n = poll.poll(
-            &mut events,
-            Some(Duration::from_secs(1)),
-        ).unwrap();
-
-        assert_eq!(n, 1);
-
-        match ep_rcvr.try_recv().unwrap() {
-            Some(err) => {
-                return Err(TCPWorkerAdapterError::IO(err));
-            }
-            None => {}
-        };
+        spawn(move || err_sink(|| listener.run()));
 
         Ok(TCPWorkerAdapter {
             listener: l_sndr.clone(),

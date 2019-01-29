@@ -244,10 +244,10 @@ impl W1 {
                 DaemonWorker::WorkerCreated(wid) => {
                     self.wid = Some(dbg!(wid));
                 }
-                DaemonWorker::JobAssigned(cid, tid, sid, cmd) => {
+                DaemonWorker::JobAssigned(tid, sid, cid, cmd) => {
                     let ret = self.exec(&cmd);
 
-                    self.rep.send(DaemonRequest::Finished(self.wid.clone().unwrap(), cid, tid, sid, ret));
+                    self.rep.send(DaemonRequest::Finished(self.wid.clone().unwrap(), tid, sid, cid, ret));
                     i += 1;
                 }
             }

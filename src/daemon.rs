@@ -52,6 +52,10 @@ pub(crate) enum ThreadState {
     Err(ThreadError),
 
     // Waiting
+    // todo On pause, the thread is immediately paused and the other thread is forked
+    // todo that receives the new pause ID
+    // todo this should resolve the situation where the thread hasn't yet entered paused
+    // todo state, but had already received Unpause from whoever is supposed to unpause it.
     Paused(PauseId),
     Exited(Result<(), ThreadError>),
 }
@@ -108,7 +112,7 @@ pub struct DPU {
     assignment_queue: VecDeque<Ass>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub enum RValueLocal {
     Ref(ContextIdent),
     Const(ContextValue),
@@ -129,7 +133,7 @@ impl RValueLocal {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub enum RValueExtern {
     ContextCreate,
     ThreadCreate(RValueLocal, Option<RValueLocal>),
@@ -164,7 +168,7 @@ impl RValueExtern {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub enum RValue {
     Local(RValueLocal),
     Extern(RValueExtern),
@@ -183,7 +187,7 @@ impl RValue {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub enum Op {
     LocalSet(ContextIdent, RValue),
 
@@ -194,7 +198,7 @@ pub enum Op {
     ThreadRemove(RValueLocal),
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub enum OpErrReason {
     ContextDoesNotExist { id: ContextId },
     ThreadDoesNotExist { id: ThreadId },
@@ -208,17 +212,18 @@ pub enum OpErrReason {
     UnknownOp,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct OpErr {
     op_index: Option<usize>,
     op_reason: OpErrReason,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub enum WorkerErr {
     Custom(HashMap<String, String>),
     Default(OpErrReason),
 }
+
 
 pub type WorkerResult = Result<Vec<Op>, WorkerErr>;
 
@@ -275,11 +280,11 @@ pub struct DaemonWorkerInfo {
 #[derive(Clone, Debug)]
 pub enum DaemonWorker {
     WorkerCreated(WorkerId),
-    JobAssigned(CommandId, ThreadId, StepId, InterpolatedCommand),
+    JobAssigned(ThreadId, StepId, CommandId, InterpolatedCommand),
 }
 
 pub enum DaemonRequest {
-    Finished(WorkerId, CommandId, ThreadId, StepId, WorkerResult),
+    Finished(WorkerId, ThreadId, StepId, CommandId, WorkerResult),
 
     /// worker needs a WorkerId
     WorkerAdd(WorkerInfo, Sender<DaemonWorker>),
@@ -336,7 +341,7 @@ impl DPU {
         }
 
         for a in multi_queue.worker_remove(key) {
-            assignment_queue.push_back(a)
+            assignment_queue.push_back(a);
         };
 
         true
@@ -381,7 +386,7 @@ impl DPU {
     ) {
         while let Ok(pkt) = receiver.try_recv() {
             match pkt {
-                DaemonRequest::Finished(wid, queue_id, thread_id, step_id, res) => {
+                DaemonRequest::Finished(wid, thread_id, step_id, queue_id, res) => {
                     let thread = state.threads.get_mut(&thread_id).unwrap();
 
                     assert_eq!(step_id, thread.step);
@@ -450,7 +455,7 @@ impl DPU {
 
             assert_eq!(step_id, thread.step);
 
-            worker.stream.send(DaemonWorker::JobAssigned(command.id.clone(), thread_id, step_id, command.clone()));
+            worker.stream.send(DaemonWorker::JobAssigned(thread_id, step_id, command.id.clone(), command.clone()));
         }
     }
 

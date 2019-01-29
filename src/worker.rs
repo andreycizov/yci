@@ -33,7 +33,7 @@ impl WorkerReplier {
     }
 
     pub fn reply(&mut self, x: WorkerResult) {
-        self.sender.send(DaemonRequest::Finished(self.wid.clone(), self.qid.clone(), self.tid.clone(), self.sid, x)).unwrap();
+        self.sender.send(DaemonRequest::Finished(self.wid.clone(), self.tid.clone(), self.sid, self.qid.clone(), x)).unwrap();
     }
 }
 
