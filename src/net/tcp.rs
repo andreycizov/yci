@@ -33,6 +33,8 @@ use std::sync::mpsc::TryRecvError;
 use std::fmt::Debug;
 use bytes::BigEndian;
 
+use nom::Err as NomErr;
+
 const TA: Token = Token(0);
 const TB: Token = Token(1);
 const TC: Token = Token(2);
@@ -52,7 +54,98 @@ pub enum ClientBkRq {
     Result(String, WorkerResult),
 }
 
-struct Client {
+impl StreamReadable for ClientBkRq {
+    fn read<'a>(buffer: &'a [u8]) -> Result<(&'a [u8], Self), NomErr<&'a [u8], u32>> {
+        use nom::{named, map_opt, error_position, map, do_parse, take, call, le_u16};
+
+        pub fn parse_packet(buff: Vec<u8>) -> Option<ClientBkRq> {
+            let x: &[u8] = buff.as_ref();
+            serde_json::from_slice::<ClientBkRq>(&x).ok()
+        }
+
+        named!(
+            pub parse_packet_bytes<ClientBkRq>,
+            map_opt!(
+                map!(
+                    do_parse!(
+                       ty: le_u16
+                        >> data: take!(ty)
+                        >> (
+                            data
+                        )
+                    ),
+                    Vec::from
+                ),
+                parse_packet
+            )
+        );
+
+        parse_packet_bytes(buffer)
+    }
+}
+
+impl StreamWritable<serde_json::Error> for ClientBkRq {
+    fn write(&self) -> Result<Vec<u8>, serde_json::Error> {
+        use bytes::buf::BufMut;
+
+        let string = serde_json::to_string(self)?;
+
+        let string = string.into_bytes();
+        let mut buf = bytes::BytesMut::with_capacity(string.len() + 2);
+
+        buf.put_u16_be(string.len() as u16);
+        buf.put(string);
+        Ok(buf.to_owned().to_vec())
+    }
+}
+
+impl StreamReadable for ClientBkRp {
+    fn read<'a>(buffer: &'a [u8]) -> Result<(&'a [u8], Self), NomErr<&'a [u8], u32>> {
+        use nom::{named, map_opt, error_position, map, do_parse, take, call, le_u16};
+
+        pub fn parse_packet(buff: Vec<u8>) -> Option<ClientBkRp> {
+            let x: &[u8] = buff.as_ref();
+            serde_json::from_slice::<ClientBkRp>(&x).ok()
+        }
+
+        named!(
+            pub parse_packet_bytes<ClientBkRp>,
+            map_opt!(
+                map!(
+                    do_parse!(
+                       ty: le_u16
+                        >> data: take!(ty)
+                        >> (
+                            data
+                        )
+                    ),
+                    Vec::from
+                ),
+                parse_packet
+            )
+        );
+
+        parse_packet_bytes(buffer)
+    }
+}
+
+
+impl StreamWritable<serde_json::Error> for ClientBkRp {
+    fn write(&self) -> Result<Vec<u8>, serde_json::Error> {
+        use bytes::buf::BufMut;
+
+        let string = serde_json::to_string(self)?;
+
+        let string = string.into_bytes();
+        let mut buf = bytes::BytesMut::with_capacity(string.len() + 2);
+
+        buf.put_u16_be(string.len() as u16);
+        buf.put(string);
+        Ok(buf.to_owned().to_vec())
+    }
+}
+
+pub struct Client {
     poll: Poll,
     master_tx: Sender<DaemonRequest>,
     bk: ParsingStream<TcpStream, ClientBkRq, ClientBkRp, SerdeError>,
@@ -94,11 +187,10 @@ impl Client {
         poll.register(&stream, TA, Ready::all(), PollOpt::level())?;
         poll.register(&rx, TB, Ready::readable(), PollOpt::level())?;
 
-        let buffer = StreamingBuffer::new(parse_packet_bytes, CLIENT_BUFFER);
+        let buffer = StreamingBuffer::new(CLIENT_BUFFER);
         let bk = ParsingStream::new(
             stream,
             buffer,
-            unparse_packet_bytes
         );
         // todo client actually needs to register first by creating Box<ClientFw>
         Ok(
@@ -190,7 +282,7 @@ impl Client {
                             let cmd_key = ctr.to_string();
                             commands.insert(
                                 cmd_key.clone(),
-                                (tid, sid, cid)
+                                (tid, sid, cid),
                             );
 
                             let req = &ClientBkRp::Request(
@@ -206,7 +298,7 @@ impl Client {
                     }
                 }
                 ClientRecv::Disconnected => {
-                    return Ok(true)
+                    return Ok(true);
                 }
                 _ => return Err(TCPWorkerAdapterError::from("both: unexpected"))
             }

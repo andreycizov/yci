@@ -109,7 +109,6 @@ impl From<StreamingBufferError> for ParserStreamerError {
     }
 }
 
-type SS<I: Debug, X> = fn(&I) -> Result<Vec<u8>, X>;
 
 pub struct ParsingStream<S: Read + Write + Evented, I: StreamReadable, O, OErr>
 {
@@ -181,7 +180,7 @@ impl<S: Read + Write + Evented, I: StreamReadable, O: StreamWritable<OErr>, OErr
             return Err(SendError::Disconnected);
         }
 
-        self.stream.write(t.write(t).map_err(|x| SendError::Serializer(x))?.as_ref())?;
+        self.stream.write(t.write().map_err(|x| SendError::Serializer(x))?.as_ref())?;
 
         Ok(())
     }

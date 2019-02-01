@@ -63,3 +63,12 @@ fn test_streaming_buffer() {
 //    assert_eq!(x, Some(vec![b'\x66', b'\x66']));
 }
 
+
+#[test]
+fn test_client_local() {
+    Client::new(
+
+        
+    )
+}
+
