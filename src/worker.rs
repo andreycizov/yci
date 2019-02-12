@@ -1,6 +1,6 @@
 // given an InterpolatedCommand, return a WorkerResult
 
-use crate::obj::InterpolatedCommand;
+use crate::obj::XCmd;
 use crate::daemon::WorkerResult;
 use crate::daemon::DaemonRequest;
 use crate::obj::*;
@@ -52,5 +52,5 @@ pub trait Worker {
     ///
     /// How does a worker return the result to the daemon?
     /// Callback would require a mutable reference to the daemon itself
-    fn put(&mut self, command: &InterpolatedCommand, result_cb: WorkerReplier);
+    fn put(&mut self, command: &XCmd, result_cb: WorkerReplier);
 }

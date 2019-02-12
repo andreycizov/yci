@@ -4,21 +4,24 @@ use nom::Err::*;
 use crate::net::parser::*;
 use crate::net::util::*;
 use serde_json;
+use mio_extras::channel::channel;
+use crate::daemon::DaemonRequest;
+use std::net::SocketAddr;
 
 #[test]
 fn test_tcp_parser_a() {
-    dbg!(serde_json::to_string(&ClientBkRq::Result("1".into(), Ok(vec![]))));
+    dbg!(serde_json::to_string(&ClientBkRq::Result(1, Ok(vec![]))));
     assert_eq!(
-        parse_packet_bytes(b"\x1A\x00{\"Result\":[\"1\",{\"Ok\":[]}]}"),
-        Ok((b"".as_ref(), ClientBkRq::Result("1".into(), Ok(vec![]))))
+        parse_packet_bytes(b"\x18\x00{\"Result\":[1,{\"Ok\":[]}]}"),
+        Ok((b"".as_ref(), ClientBkRq::Result(1, Ok(vec![]))))
     );
 }
 
 #[test]
 fn test_tcp_parser_b() {
     assert_eq!(
-        parse_packet_bytes(b"\x1A\x00{\"Result\":[\"1\",{\"Ok\":[]}]}b"),
-        Ok((b"b".as_ref(), ClientBkRq::Result("1".into(), Ok(vec![]))))
+        parse_packet_bytes(b"\x18\x00{\"Result\":[1,{\"Ok\":[]}]}b"),
+        Ok((b"b".as_ref(), ClientBkRq::Result(1, Ok(vec![]))))
     );
 }
 
@@ -66,9 +69,21 @@ fn test_streaming_buffer() {
 
 #[test]
 fn test_client_local() {
-    Client::new(
+    let (master_tx, master_rx) = channel::<DaemonRequest>();
+    let (listener_tx, listener_rx) = channel::<ListenerRq>();
 
-        
-    )
+    // todo create a tcp stream here.
+
+    // 1. client negotiates capacity
+    // 2. client announces itself to the master
+    // 3. client renounces themselves from the master
+
+    let listener = TCPWorkerAdapter::new(
+        "127.0.0.1:45000",
+        master_tx,
+    ).unwrap();
+
+
+
 }
 

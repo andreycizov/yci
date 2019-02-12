@@ -3,9 +3,9 @@ use nom::{IResult, Err as NomErr, Context as NomContext};
 use crate::prog::parser::*;
 use crate::obj::*;
 
-pub(crate) type IRMap = Vec<Command>;
+pub(crate) type IRMap = Vec<Cmd>;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct IRErr<'a, EP> {
     pub location: Location,
 
@@ -19,7 +19,7 @@ impl<'a, EP> IRErr<'a, EP> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum IRErrType<'a, EP> {
     // file not fully parsed
     AdditionalData,
@@ -113,8 +113,9 @@ pub fn ir_load<'a, 'b, EP>(file: IResult<Input<'a>, IRFile, EP>) -> Result<IRMap
         match &item.item {
             IRLine::Command(key, args) => {
                 let map_param = |x: &IRArg| match x {
-                    IRArg::Const(z) => CommandArgument::Const(z.clone()),
-                    IRArg::Ref(z) => CommandArgument::Ref(z.clone()),
+                    IRArg::Const(z) => CmdArg::Const(z.clone()),
+                    IRArg::Ref(z) => CmdArg::Ref(CtxRef(CtxNs::Curr, z.clone())),
+                    IRArg::XRef(a, z) => CmdArg::Ref(CtxRef(CtxNs::Ref(a.clone()), z.clone())),
                 };
 
                 let opcode = args.first();
@@ -127,7 +128,7 @@ pub fn ir_load<'a, 'b, EP>(file: IResult<Input<'a>, IRFile, EP>) -> Result<IRMap
                     let params = params.collect();
 
                     res.push(
-                        Command::create(
+                        Cmd::create(
                             key.item.clone(),
                             map_param(&(&opcode_mapped.item).clone()),
                             params,

@@ -1,0 +1,6 @@
+# reference a parent context
+ep: push 01 a
+ep: $a.b 01 a
+01: set $ag 1 02
+02: set asdasd $g asdasdasd $a.b asd
+###

@@ -41,11 +41,11 @@ pub enum ThreadError {
 pub(crate) enum ThreadState {
     Created,
     Fetching(CommandId),
-    Fetched(Command),
-    Interpolating(Command),
-    Interpolated(InterpolatedCommand),
-    Queued(InterpolatedCommand),
-    Assigned(InterpolatedCommand, WorkerId),
+    Fetched(Cmd),
+    Interpolating(Cmd),
+    Interpolated(XCmd),
+    Queued(XCmd),
+    Assigned(XCmd, WorkerId),
     // Running(InterpolatedCommand, LockId),
     Done(WorkerResult),
 
@@ -61,8 +61,8 @@ pub(crate) enum ThreadState {
 }
 
 pub struct State {
-    commands: HashMap<CommandId, Command>,
-    contexts: HashMap<ContextId, Context>,
+    commands: HashMap<CommandId, Cmd>,
+    contexts: HashMap<ContextId, Ctx>,
     pub(crate) threads: HashMap<ThreadId, Thread>,
 
     rng: ThreadRng,
@@ -81,12 +81,12 @@ impl State {
         self.threads.insert(thread.id.clone(), thread);
     }
 
-    pub fn insert_context(&mut self, context: &Context) {
+    pub fn insert_context(&mut self, context: &Ctx) {
         self.contexts.insert(context.id.clone(), context.clone());
     }
 
     pub fn insert_commands<'a, I>(&mut self, commands: I)
-        where I: Iterator<Item=&'a Command>, {
+        where I: Iterator<Item=&'a Cmd>, {
         for command in commands {
             self.commands.insert(command.id.clone(), command.clone());
         }
@@ -96,8 +96,8 @@ impl State {
 impl Default for State {
     fn default() -> Self {
         State {
-            commands: HashMap::<CommandId, Command>::default(),
-            contexts: HashMap::<ContextId, Context>::default(),
+            commands: HashMap::<CommandId, Cmd>::default(),
+            contexts: HashMap::<ContextId, Ctx>::default(),
             threads: HashMap::<ThreadId, Thread>::default(),
             rng: ThreadRng::default(),
         }
@@ -148,7 +148,7 @@ impl RValueExtern {
         match self {
             RValueExtern::ContextCreate => {
                 let id: ContextId = state.create_id().to_string();
-                state.insert_context(&Context::empty(id.clone()));
+                state.insert_context(&Ctx::empty(id.clone()));
                 Ok(ContextValue::from(id))
             }
             RValueExtern::ThreadCreate(ip, ctx) => {
@@ -191,8 +191,9 @@ impl RValue {
 pub enum Op {
     LocalSet(ContextIdent, RValue),
 
-    ContextSet(ContextIdent, RValueLocal),
-    ContextCopy(RValueLocal, RValueLocal, RValueLocal),
+    ContextSet(RValueLocal, RValueLocal, RValueLocal),
+    // todo ContextCompareAndSet (allows for writing mutexes easier)
+    //ContextCopy(RValueLocal, RValueLocal, RValueLocal),
     ContextRemove(RValueLocal),
 
     ThreadRemove(RValueLocal),
@@ -207,7 +208,7 @@ pub enum OpErrReason {
     InvalidArg(usize),
     MissingArg(usize),
     ThreadRefInvalid { ident: ContextValue },
-    CommandRefInvalid { ident: ContextValue },
+    CommandRefInvalid(Option<ContextValue>),
     PostStepped { current: StepId, selected: StepId },
     UnknownOp,
 }
@@ -265,10 +266,10 @@ pub(crate) type WS = HashMap<WorkerId, DaemonWorkerInfo>;
 pub(crate) type Ass = Assignment<WorkerId, ContextValue, (ThreadId, StepId)>;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct WorkerInfo {
-    pub(crate) capacity: Option<usize>,
-    pub(crate) queues: Vec<String>,
-}
+pub struct WorkerInfo (
+    pub Option<usize>,
+    pub Vec<String>,
+);
 
 #[derive(Clone)]
 pub struct DaemonWorkerInfo {
@@ -280,7 +281,7 @@ pub struct DaemonWorkerInfo {
 #[derive(Clone, Debug)]
 pub enum DaemonWorker {
     WorkerCreated(WorkerId),
-    JobAssigned(ThreadId, StepId, CommandId, InterpolatedCommand),
+    JobAssigned(ThreadId, StepId, CommandId, XCmd),
 }
 
 pub enum DaemonRequest {
@@ -314,10 +315,12 @@ impl DPU {
             None => {}
         };
 
+        let WorkerInfo(capacity, queues) = info;
+
         for a in multi_queue.worker_add(
             key.clone(),
-            info.capacity,
-            &info.queues,
+            *capacity,
+            &queues,
         ) {
             assignment_queue.push_back(a)
         };
@@ -325,6 +328,47 @@ impl DPU {
         stream.send(DaemonWorker::WorkerCreated(key.clone()));
 
         false
+    }
+
+    pub(crate) fn interpolate(
+        state: &State,
+        cmd: &Cmd,
+        ctx: Option<&Ctx>,
+    ) -> Result<XCmd, InterpolationError> {
+        // todo: we're no longer interpolating against a single context
+        let match_arg = |x: &CmdArg| match x {
+            CmdArg::Const(v) => Ok(XCmdArg::Const(v.clone())),
+            CmdArg::Ref(CtxRef(ns, var)) =>
+                match ns {
+                    CtxNs::Curr => {
+                        let ctx = ctx.ok_or(InterpolationError::CtxNull)?;
+
+                        let v = ctx.vals.get(var);
+                        Ok(XCmdArg::Ref(XCtxRef(XCtxNs::Curr, var.clone()), v.map(|x| x.clone())))
+                    }
+                    CtxNs::Ref(ns_k) => {
+                        let ctx = state.contexts.get(ns_k).ok_or(
+                            InterpolationError::CtxMiss(ns_k.clone())
+                        )?;
+
+                        let v = ctx.vals.get(var);
+                        Ok(XCmdArg::Ref(XCtxRef(XCtxNs::Ref(ns_k.clone()), var.clone()), v.map(|x| x.clone())))
+                    }
+                }
+        };
+
+        let args: Result<Vec<XCmdArg>, InterpolationError> = cmd.args.iter().map(match_arg).collect();
+        let args = args?;
+
+        let opcode = match_arg(&cmd.opcode)?.value().ok_or(
+            InterpolationError::CmdNull
+        )?;
+
+        Ok(XCmd {
+            id: cmd.id.clone(),
+            opcode,
+            args,
+        })
     }
 
     pub(crate) fn worker_remove(
@@ -336,7 +380,7 @@ impl DPU {
         match workers.remove(key) {
             Some(_) => return true,
             None => {
-                return false
+                return false;
             }
         }
 
@@ -379,7 +423,6 @@ impl DPU {
     pub(crate) fn process_channel(
         receiver: &Receiver<DaemonRequest>,
         state: &mut State,
-
         assignment_queue: &mut VecDeque<Ass>,
         workers: &mut WS,
         multi_queue: &mut MQ,
@@ -512,7 +555,7 @@ impl DPU {
                     // we ignore the case where the ContextId is nonexistent, but the command never
                     // accesses the context
 
-                    match command.interpolate(ctx) {
+                    match DPU::interpolate(&state, &command, ctx) {
                         Ok(x) => {
                             Some(ThreadState::Interpolated(x))
                         }
@@ -524,7 +567,8 @@ impl DPU {
                 ThreadState::Interpolated(command) => {
                     thread.step = thread.step.wrapping_add(1);
 
-                    let assignment = multi_queue.job_create(&command.opcode.value(), &(thread.id.clone(), thread.step));
+                    let assignment =
+                        multi_queue.job_create(&command.opcode, &(thread.id.clone(), thread.step));
 
                     for val in assignment {
                         assignment_queue.push_back(val);
@@ -557,12 +601,12 @@ impl DPU {
                                     "new_ctx".into(),
                                     RValue::Extern(RValueExtern::ContextCreate),
                                 ),
-                                Op::ContextCopy(
+                                Op::ContextSet(
                                     RValueLocal::Ref("new_ctx".into()),
                                     RValueLocal::Const(LOCAL_PAR_CTX.into()),
                                     RValueLocal::Ref(LOCAL_CTX.into()),
                                 ),
-                                Op::ContextCopy(
+                                Op::ContextSet(
                                     RValueLocal::Ref("new_ctx".into()),
                                     RValueLocal::Const(LOCAL_PAR_IP.into()),
                                     RValueLocal::Ref(LOCAL_NIP.into()),
@@ -636,19 +680,19 @@ impl DPU {
                         rval.resolve(&locals, state).map_err(map_err_fn)?,
                     );
                 }
-                Op::ContextSet(loc_ident, rval) => {
-                    let ctx_ident = RValueLocal::Ref(LOCAL_CTX.into()).resolve(&locals).map_err(map_err_fn)?;
-
-                    let mut ctx = state.contexts.get_mut(&ctx_ident).ok_or(
-                        map_err_fn(OpErrReason::ContextDoesNotExist { id: ctx_ident })
-                    )?;
-
-                    ctx.vals.insert(
-                        loc_ident.clone(),
-                        rval.resolve(&locals).map_err(map_err_fn)?,
-                    );
-                }
-                Op::ContextCopy(ctx_ident, ctx_val_ident, rval) => {
+//                Op::ContextSet(loc_ident, rval) => {
+//                    let ctx_ident = RValueLocal::Ref(LOCAL_CTX.into()).resolve(&locals).map_err(map_err_fn)?;
+//
+//                    let mut ctx = state.contexts.get_mut(&ctx_ident).ok_or(
+//                        map_err_fn(OpErrReason::ContextDoesNotExist { id: ctx_ident })
+//                    )?;
+//
+//                    ctx.vals.insert(
+//                        loc_ident.clone(),
+//                        rval.resolve(&locals).map_err(map_err_fn)?,
+//                    );
+//                }
+                Op::ContextSet(ctx_ident, ctx_val_ident, rval) => {
                     let ctx_ident = ctx_ident.resolve(&locals).map_err(map_err_fn)?;
                     let ctx_val_ident = ctx_val_ident.resolve(&locals).map_err(map_err_fn)?;
                     let rval = rval.resolve(&locals).map_err(map_err_fn)?;

@@ -1,5 +1,8 @@
 use std::collections::HashMap;
 use serde_derive::{Serialize, Deserialize};
+use crate::daemon::LOCAL_CTX;
+use crate::daemon::Op;
+use crate::daemon::RValueLocal;
 
 pub type Id = u128;
 pub type GenId = String;
@@ -13,6 +16,9 @@ pub type PauseId = GenId;
 pub type ContextIdent = GenId;
 pub type ContextValue = GenId;
 
+// todo null values for context variables
+// todo ability to access both current context and a context referred to by a variable from the current context
+// todo
 
 #[derive(Debug, Clone)]
 pub struct WorkerStatus {
@@ -21,12 +27,12 @@ pub struct WorkerStatus {
 }
 
 #[derive(Debug, Clone)]
-pub struct Context {
+pub struct Ctx {
     pub(crate) id: ContextId,
     pub(crate) vals: HashMap<ContextIdent, ContextValue>,
 }
 
-impl Context {
+impl Ctx {
     pub fn get(&self, ident: &ContextIdent) -> Option<ContextValue> {
         match self.vals.get(ident) {
             Some(x) => Some(x.clone()),
@@ -35,27 +41,74 @@ impl Context {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct Command {
-    pub(crate) id: CommandId,
-    pub(crate) opcode: CommandArgument,
-    pub(crate) args: Vec<CommandArgument>,
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum CtxNs {
+    Curr,
+    Ref(ContextIdent),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct InterpolatedCommand {
+pub struct CtxRef(
+    pub CtxNs,
+    pub ContextIdent,
+);
+
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Cmd {
     pub(crate) id: CommandId,
-    pub(crate) opcode: InterpolatedCommandArgument,
-    pub(crate) args: Vec<InterpolatedCommandArgument>,
+    pub(crate) opcode: CmdArg,
+    pub(crate) args: Vec<CmdArg>,
 }
 
-impl InterpolatedCommand {
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum CmdArg {
+    // value
+    Const(ContextValue),
+    // name of the ctx variable that has the value
+    Ref(CtxRef),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum XCtxNs {
+    Curr,
+    Ref(ContextId),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct XCtxRef(
+    pub XCtxNs,
+    pub ContextIdent,
+);
+
+impl XCtxRef {
+    pub fn set(&self, val: RValueLocal) -> Op {
+        let XCtxRef(ns, var) = &self;
+        Op::ContextSet(
+            match ns {
+                XCtxNs::Curr => RValueLocal::Ref(LOCAL_CTX.to_string()),
+                XCtxNs::Ref(id) => RValueLocal::Const(id.clone()),
+            },
+            RValueLocal::Const(var.clone()),
+            val,
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct XCmd {
+    pub id: CommandId,
+    pub opcode: ContextValue,
+    pub args: Vec<XCmdArg>,
+}
+
+impl XCmd {
     pub fn create(
         id: CommandId,
-        opcode: InterpolatedCommandArgument,
-        args: Vec<InterpolatedCommandArgument>,
+        opcode: ContextValue,
+        args: Vec<XCmdArg>,
     ) -> Self {
-        InterpolatedCommand {
+        XCmd {
             id,
             opcode,
             args,
@@ -63,42 +116,40 @@ impl InterpolatedCommand {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum CommandArgument {
-    // value
-    Const(ContextValue),
-    // name of the ctx variable that has the value
-    Ref(ContextIdent),
-}
-
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum InterpolatedCommandArgument {
+pub enum XCmdArg {
     Const(ContextValue),
-    Ref(ContextIdent, ContextValue),
+    Ref(XCtxRef, Option<ContextValue>),
 }
 
-impl InterpolatedCommandArgument {
-    pub fn value(&self) -> ContextValue {
+impl XCmdArg {
+    pub fn ident(&self) -> Option<XCtxRef> {
         match self {
-            InterpolatedCommandArgument::Const(x) => x.clone(),
-            InterpolatedCommandArgument::Ref(_, x) => x.clone(),
+            XCmdArg::Const(_) => None,
+            XCmdArg::Ref(xref, _) => Some(xref.clone())
+        }
+    }
+
+    pub fn value(&self) -> Option<ContextValue> {
+        match self {
+            XCmdArg::Const(x) => Some(x.clone()),
+            XCmdArg::Ref(_, x) => x.clone(),
         }
     }
 }
 
-impl Context {
+impl Ctx {
     pub fn empty(
         id: ContextId,
     ) -> Self {
-        Context::create(id, HashMap::<ContextIdent, ContextValue>::default())
+        Ctx::create(id, HashMap::<ContextIdent, ContextValue>::default())
     }
 
     pub fn create(
         id: ContextId,
         vals: HashMap<ContextIdent, ContextValue>,
     ) -> Self {
-        Context {
+        Ctx {
             id,
             vals,
         }
@@ -107,42 +158,24 @@ impl Context {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum InterpolationError {
-    EmptyContext,
-    Ref(String)
+    CtxNull,
+    CtxMiss(ContextId),
+    CmdNull,
+    Ref(CtxRef),
 }
 
-impl Command {
+impl Cmd {
     pub fn create(
         id: CommandId,
-        opcode: CommandArgument,
-        args: Vec<CommandArgument>,
-    ) -> Command {
-        Command {
+        opcode: CmdArg,
+        args: Vec<CmdArg>,
+    ) -> Cmd {
+        Cmd {
             id,
             opcode,
             args,
         }
     }
 
-    pub fn interpolate(&self, ctx: Option<&Context>) -> Result<InterpolatedCommand, InterpolationError> {
-        let match_arg = |x: &CommandArgument| match x {
-            CommandArgument::Const(v) => Ok(InterpolatedCommandArgument::Const(v.clone())),
-            CommandArgument::Ref(k) => ctx.ok_or(InterpolationError::EmptyContext).and_then(|ctx|{
-                match ctx.vals.get(k) {
-                    Some(v) => Ok(InterpolatedCommandArgument::Ref(k.clone(), v.clone())),
-                    None => Err(InterpolationError::Ref(k.clone()))
-                }
-            })
-        };
 
-        let a: Result<Vec<InterpolatedCommandArgument>, InterpolationError> = self.args.iter().map(match_arg).collect();
-
-        let opcode = match_arg(&self.opcode);
-
-        Ok(InterpolatedCommand {
-            id: self.id.clone(),
-            opcode: opcode?,
-            args: a?,
-        })
-    }
 }

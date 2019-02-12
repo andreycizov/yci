@@ -13,12 +13,17 @@ struct W1 {
 }
 
 impl W1 {
-    fn exec(&mut self, command: &InterpolatedCommand) -> WorkerResult {
+    fn exec(&mut self, command: &XCmd) -> WorkerResult {
         let nip = || {
             let next_ip = command.args.last();
 
             let next_ip = match next_ip {
-                Some(x) => Ok(x),
+                Some(x) => match x.value() {
+                    Some(y) => Ok(y),
+                    None => Err(
+                        WorkerErr::Default(OpErrReason::InvalidArg(command.args.len() - 1))
+                    )
+                }
                 None => Err(
                     WorkerErr::Default(OpErrReason::ContextRefInvalid { ident: "".into() })
                 )
@@ -27,7 +32,7 @@ impl W1 {
             next_ip
         };
 
-        match command.opcode.value().as_ref() {
+        match command.opcode.as_ref() {
             "push" => {
                 let next_ip = nip()?;
 
@@ -43,7 +48,7 @@ impl W1 {
                         ),
                         Op::LocalSet(
                             LOCAL_NIP.into(),
-                            RValue::Local(RValueLocal::Const(next_ip.value())),
+                            RValue::Local(RValueLocal::Const(next_ip)),
                         ),
                     ]
                 )
@@ -51,19 +56,20 @@ impl W1 {
             "list_create" => {
                 let var_name = command.args.first().ok_or(
                     WorkerErr::Default(OpErrReason::ContextRefInvalid { ident: "".into() })
-                )?;
+                ).and_then(|a| a.ident().ok_or_else(
+                    || WorkerErr::Default(OpErrReason::InvalidArg(0))
+                ))?;
 
                 let next_ip = nip()?;
 
                 Ok(
                     vec![
-                        Op::ContextSet(
-                            var_name.value(),
+                        var_name.set(
                             RValueLocal::Const("".into()),
                         ),
                         Op::LocalSet(
                             LOCAL_NIP.into(),
-                            RValue::Local(RValueLocal::Const(next_ip.value())),
+                            RValue::Local(RValueLocal::Const(next_ip)),
                         ),
                     ]
                 )
@@ -71,21 +77,24 @@ impl W1 {
             "list_length" => {
                 let var_val = command.args.first().ok_or(
                     WorkerErr::Default(OpErrReason::ContextRefInvalid { ident: "".into() })
+                )?.value().ok_or(
+                    WorkerErr::Default(OpErrReason::InvalidArg(0))
                 )?;
+
                 let var_var = command.args.get(1).ok_or(
                     WorkerErr::Default(OpErrReason::ContextRefInvalid { ident: "".into() })
+                )?.ident().ok_or(
+                    WorkerErr::Default(OpErrReason::InvalidArg(0))
                 )?;
-                let cnt = var_val.value().split(",").count();
+
+                let cnt = var_val.split(",").count();
                 let next_ip = nip()?;
                 Ok(
                     vec![
-                        Op::ContextSet(
-                            var_var.value(),
-                            RValueLocal::Const(cnt.to_string()),
-                        ),
+                        var_var.set(RValueLocal::Const(cnt.to_string())),
                         Op::LocalSet(
                             LOCAL_NIP.into(),
-                            RValue::Local(RValueLocal::Const(next_ip.value())),
+                            RValue::Local(RValueLocal::Const(next_ip)),
                         ),
                     ])
             }
@@ -94,22 +103,18 @@ impl W1 {
                     WorkerErr::Default(OpErrReason::ContextRefInvalid { ident: "".into() })
                 )?;
 
-                let var_name = match var_name {
-                    InterpolatedCommandArgument::Const(_) => Err(WorkerErr::Default(OpErrReason::InvalidArg(0))),
-                    InterpolatedCommandArgument::Ref(ident, _) => Ok(ident)
-                }?;
+                let var_name = var_name.ident().ok_or(
+                    WorkerErr::Default(OpErrReason::InvalidArg(0))
+                )?;
 
                 let next_ip = nip()?;
 
                 Ok(
                     vec![
-                        Op::ContextSet(
-                            var_name.clone(),
-                            RValueLocal::Const("foo@bar.com,zeta@beta.org,culinary@sky.net".into()),
-                        ),
+                        var_name.set(RValueLocal::Const("foo@bar.com,zeta@beta.org,culinary@sky.net".into())),
                         Op::LocalSet(
                             LOCAL_NIP.into(),
-                            RValue::Local(RValueLocal::Const(next_ip.value())),
+                            RValue::Local(RValueLocal::Const(next_ip)),
                         ),
                     ]
                 )
@@ -117,33 +122,46 @@ impl W1 {
             "set" => {
                 let mut iter = command.args.iter();
 
-                let mut nip: Option<_> = None;
                 let mut ret = Vec::<Op>::with_capacity(command.args.len() + 1 / 2);
+
+
+                let mut argidx = 0;
 
                 loop {
                     let a = iter.next().ok_or(
-                        WorkerErr::Default(OpErrReason::ContextRefInvalid { ident: "".into() })
+                        WorkerErr::Default(OpErrReason::InvalidArg(argidx))
                     )?;
 
                     if let Some(b) = iter.next() {
+                        let a = a.ident().ok_or(
+                            WorkerErr::Default(OpErrReason::InvalidArg(argidx))
+                        )?;
+
+                        argidx += 1;
+
+                        let b = b.value().ok_or(
+                            WorkerErr::Default(OpErrReason::InvalidArg(argidx))
+                        )?;
+
                         ret.push(
-                            Op::ContextSet(
-                                a.value(),
-                                RValueLocal::Const(b.value()),
+                            a.set(
+                                RValueLocal::Const(b),
                             )
                         )
                     } else {
-                        nip = Some(a);
+                        let nip = a.value().ok_or(
+                            WorkerErr::Default(OpErrReason::InvalidArg(argidx))
+                        )?;
+                        ret.push(
+                            Op::LocalSet(
+                                LOCAL_NIP.into(),
+                                RValue::Local(RValueLocal::Const(nip)),
+                            )
+                        );
                         break;
                     }
                 }
 
-                ret.push(
-                    Op::LocalSet(
-                        LOCAL_NIP.into(),
-                        RValue::Local(RValueLocal::Const(nip.unwrap().value())),
-                    )
-                );
 
                 Ok(
                     ret
@@ -154,29 +172,37 @@ impl W1 {
 
                 let a = iter.next().ok_or(
                     WorkerErr::Default(OpErrReason::MissingArg(0))
-                )?;
+                ).and_then(|a| a.value().ok_or_else(
+                    || WorkerErr::Default(OpErrReason::InvalidArg(0))
+                ))?;
 
-                let a = a.value().parse::<u128>().map_err(
+                let a = a.parse::<u128>().map_err(
                     |_| WorkerErr::Default(OpErrReason::InvalidArg(0))
                 )?;
 
                 let op = iter.next().ok_or(
                     WorkerErr::Default(OpErrReason::MissingArg(1))
+                )?.value().ok_or_else(
+                    || WorkerErr::Default(OpErrReason::InvalidArg(1))
                 )?;
 
                 let b = iter.next().ok_or(
                     WorkerErr::Default(OpErrReason::MissingArg(2))
-                )?;
+                ).and_then(|a| a.value().ok_or_else(
+                    || WorkerErr::Default(OpErrReason::InvalidArg(2))
+                ))?;
 
-                let b = b.value().parse::<u128>().map_err(
+                let b = b.parse::<u128>().map_err(
                     |_| WorkerErr::Default(OpErrReason::InvalidArg(2))
                 )?;
 
-                let d = iter.next().ok_or(
+                let ctxref = iter.next().ok_or(
                     WorkerErr::Default(OpErrReason::MissingArg(3))
+                )?.ident().ok_or_else(
+                    || WorkerErr::Default(OpErrReason::InvalidArg(3))
                 )?;
 
-                let cmp_fn: fn(u128, u128) -> bool = match op.value().as_ref() {
+                let cmp_fn: fn(u128, u128) -> bool = match op.as_ref() {
                     "<" => |a, b| a < b,
                     ">" => |a, b| a > b,
                     "=" => |a, b| a > b,
@@ -189,13 +215,10 @@ impl W1 {
 
                 Ok(
                     vec![
-                        Op::ContextSet(
-                            d.value().clone(),
-                            RValueLocal::Const(res),
-                        ),
+                        ctxref.set(RValueLocal::Const(res)),
                         Op::LocalSet(
                             LOCAL_NIP.into(),
-                            RValue::Local(RValueLocal::Const(next_ip.value())),
+                            RValue::Local(RValueLocal::Const(next_ip)),
                         ),
                     ]
                 )
@@ -204,9 +227,11 @@ impl W1 {
                 let mut iter = command.args.iter();
                 let a = iter.next().ok_or(
                     WorkerErr::Default(OpErrReason::MissingArg(0))
-                )?;
+                ).and_then(|a| a.value().ok_or_else(
+                    || WorkerErr::Default(OpErrReason::InvalidArg(0))
+                ))?;
 
-                let a = a.value().parse::<bool>().map_err(
+                let a = a.parse::<bool>().map_err(
                     |_| WorkerErr::Default(OpErrReason::InvalidArg(0))
                 )?;
 
@@ -218,8 +243,12 @@ impl W1 {
                     WorkerErr::Default(OpErrReason::MissingArg(2))
                 )?;
 
-                let b = b.value();
-                let c = c.value();
+                let b = b.value().ok_or_else(
+                    || WorkerErr::Default(OpErrReason::InvalidArg(1))
+                )?;
+                let c = c.value().ok_or_else(
+                    || WorkerErr::Default(OpErrReason::InvalidArg(2))
+                )?;
 
                 Ok(
                     vec![
@@ -273,7 +302,7 @@ impl Worker for W1 {
         ]
     }
 
-    fn put(&mut self, command: &InterpolatedCommand, result_cb: WorkerReplier) {
+    fn put(&mut self, command: &XCmd, result_cb: WorkerReplier) {
         result_cb.clone().reply(self.exec(command))
     }
 }
@@ -306,15 +335,15 @@ fn test_worker_a() {
         rx: wrx,
         tx: wtx,
         rep: tx.clone(),
-        wid: None
+        wid: None,
     };
 
     DPU::worker_add(
         &"1".into(),
-        &WorkerInfo {
-            capacity: wo.capacity(),
-            queues: wo.queues(),
-        },
+        &WorkerInfo(
+            wo.capacity(),
+            wo.queues(),
+        ),
         &wo.tx,
         &mut workers,
         &mut multi_queue,
@@ -345,11 +374,11 @@ fn test_worker_a() {
     assert_eq!(
         state.threads.get(&thread_id).unwrap().state,
         ThreadState::Queued(
-            InterpolatedCommand::create("07".into(), InterpolatedCommandArgument::Const("list_get".into()), vec![
-                InterpolatedCommandArgument::Ref("users".into(), "foo@bar.com,zeta@beta.org,culinary@sky.net".into()),
-                InterpolatedCommandArgument::Ref("i".into(), "0".into()),
-                InterpolatedCommandArgument::Const("user_id".into()),
-                InterpolatedCommandArgument::Const("08".into()),
+            XCmd::create("07".into(), "list_get".into(), vec![
+                XCmdArg::Ref(XCtxRef(XCtxNs::Curr, "users".into()), Some("foo@bar.com,zeta@beta.org,culinary@sky.net".into())),
+                XCmdArg::Ref(XCtxRef(XCtxNs::Curr, "i".into()), Some("0".into())),
+                XCmdArg::Const("user_id".into()),
+                XCmdArg::Const("08".into()),
             ]),
         ),
     );

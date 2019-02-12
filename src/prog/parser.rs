@@ -84,6 +84,17 @@ pub fn ctxref(input: Input) -> IResult<Input, StrOutput> {
     )
 }
 
+pub fn ctxxref(input: Input) -> IResult<Input, (StrOutput, StrOutput)> {
+    do_parse!(
+        input,
+        tag!("$") >>
+        xref: identifier >>
+        tag!(".") >>
+        id: identifier >>
+        ( (xref, id) )
+    )
+}
+
 //fn from_utf(x: LocatedSpan<RawInput>) -> Result<LocatedSpan<&str>, Utf8Error> {
 //    let a = str::from_utf8(x.fragment)?;
 //    LocatedSpan {
@@ -146,7 +157,12 @@ pub fn label(input: Input) -> IResult<Input, LocatedSpan<&str>> {
 pub fn ir_arg(input: Input) -> IResult<Input, Located<IRArg>> {
     alt_complete!( input,
         string => { |x| Located::from_span(x).map(|x| IRArg::Const(String::from(x))) } |
+        ctxxref => {
+        |(x, y): (LocatedSpan<&str>, LocatedSpan<&str>)|
+        Located::from_span(x).with_val((x.fragment, y.fragment)).map(|(x, y)| IRArg::XRef(String::from(x), String::from(y)))
+        } |
         ctxref => { |x| Located::from_span(x).map(|x| IRArg::Ref(String::from(x))) }
+
     )
 }
 
@@ -214,7 +230,7 @@ pub fn ir_input(input: &str) -> Input {
     Input::new(input.as_bytes())
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Location {
     pub offset: usize,
     pub line: u32,
@@ -267,6 +283,7 @@ impl <T>Located<T> {
 pub enum IRArg {
     Const(String),
     Ref(String),
+    XRef(String, String),
 }
 
 #[derive(Debug, Clone)]
