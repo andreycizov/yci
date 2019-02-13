@@ -123,6 +123,8 @@ pub struct ParsingStream<S: Read + Write + Evented, I: StreamReadable, O, OErr>
 
 impl<S: Read + Write + Evented, I: Debug + StreamReadable, O: StreamWritable<OErr>, OErr> Evented for ParsingStream<S, I, O, OErr> {
     fn register(&self, poll: &Poll, token: Token, interest: Ready, opts: PollOpt) -> io::Result<()> {
+        //let Token(tokx) = token;
+        //let token2 = Token(tokx + 100);
         poll.register(&self.stream, token, interest, opts)?;
         poll.register(&self.msgs_rx, token, interest, opts)?;
         Ok(())
@@ -180,7 +182,7 @@ impl<S: Read + Write + Evented, I: StreamReadable, O: StreamWritable<OErr>, OErr
             return Err(SendError::Disconnected);
         }
 
-        self.stream.write(t.write().map_err(|x| SendError::Serializer(x))?.as_ref())?;
+        let written = self.stream.write(t.write().map_err(|x| SendError::Serializer(x))?.as_ref())?;
 
         Ok(())
     }
@@ -192,13 +194,18 @@ impl<S: Read + Write + Evented, I: StreamReadable, O: StreamWritable<OErr>, OErr
 
         let buffer = self.stream.parse_read(&mut self.buffer);
 
+
+
         for x in buffer {
             self.msgs_tx.send(x).unwrap();
         }
 
         match self.msgs_rx.try_recv() {
             Ok(x) => match x {
-                Ok(y) => Ok(y),
+                Ok(y) => {
+
+                    Ok(y)
+                },
                 Err(err) => {
                     self.enabled = false;
                     Err(mpsc::TryRecvError::Disconnected)
@@ -241,16 +248,20 @@ impl<T, O: StreamReadable> ParserStreamer<O> for T
             while !should_stop {
                 let x = buffer.try_read::<O>();
 
+
+
                 match x {
                     Ok(x) => {
                         rtn.push(Ok(x));
                     }
-                    Err(err) => match err {
-                        StreamingBufferError::ShouldWait => {
-                            should_stop = true;
-                        }
-                        _ => {
-                            rtn.push(Err(ParserStreamerError::from(err)));
+                    Err(err) => {
+                        match err {
+                            StreamingBufferError::ShouldWait => {
+                                should_stop = true;
+                            }
+                            _ => {
+                                rtn.push(Err(ParserStreamerError::from(err)));
+                            }
                         }
                     }
                 };

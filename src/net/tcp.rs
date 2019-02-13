@@ -97,7 +97,7 @@ impl StreamWritable<serde_json::Error> for ClientBkRq {
         let string = string.into_bytes();
         let mut buf = bytes::BytesMut::with_capacity(string.len() + 2);
 
-        buf.put_u16_be(string.len() as u16);
+        buf.put_u16_le(string.len() as u16);
         buf.put(string);
         Ok(buf.to_owned().to_vec())
     }
@@ -143,7 +143,7 @@ impl StreamWritable<serde_json::Error> for ClientBkRp {
         let string = string.into_bytes();
         let mut buf = bytes::BytesMut::with_capacity(string.len() + 2);
 
-        buf.put_u16_be(string.len() as u16);
+        buf.put_u16_le(string.len() as u16);
         buf.put(string);
         Ok(buf.to_owned().to_vec())
     }
@@ -154,13 +154,13 @@ pub fn err_sink<Err: Debug, R, F>(f: F) -> Result<R, Err>
     match f() {
         Ok(x) => Ok(x),
         Err(err) => {
-            Err(dbg!(err))
+            Err(err)
         }
     }
 }
 
 
-struct StreamForwarder<S: Read + Write + Evented, I: StreamReadable + Debug, O: Debug + StreamWritable<E>, E> {
+pub struct StreamForwarder<S: Read + Write + Evented, I: StreamReadable + Debug, O: Debug + StreamWritable<E>, E> {
     //stream: S,
 
     pub(crate) bk: ParsingStream<S, I, O, E>,
@@ -171,6 +171,7 @@ struct StreamForwarder<S: Read + Write + Evented, I: StreamReadable + Debug, O: 
 
 }
 
+#[derive(Debug)]
 pub enum StreamForwarderErr {
     TxDisconnected,
     RxDisconnected,
@@ -230,15 +231,15 @@ StreamForwarder<S, I, O, E> {
         Ok(())
     }
 
-    pub fn tx_loop(&mut self) -> Result<(), StreamForwarderErr> {
+    pub fn rx_loop(&mut self) -> Result<(), StreamForwarderErr> {
         loop {
-            match self.should_tx {
+            match self.should_rx {
                 true => match self.bk.try_recv() {
                     Ok(x) => {
                         match self.tx.send(x) {
                             Ok(_) => continue,
                             Err(_) => {
-                                self.should_tx = false;
+                                self.should_rx = false;
                                 return Err(StreamForwarderErr::RxDisconnected);
                             }
                         }
@@ -257,15 +258,15 @@ StreamForwarder<S, I, O, E> {
         }
     }
 
-    pub fn rx_loop(&mut self) -> Result<(), StreamForwarderErr> {
+    pub fn tx_loop(&mut self) -> Result<(), StreamForwarderErr> {
         loop {
-            match self.should_rx {
+            match self.should_tx {
                 true => match self.rx.try_recv() {
                     Ok(x) => {
                         match self.bk.send(&x) {
                             Ok(_) => continue,
                             Err(_) => {
-                                self.should_rx = false;
+                                self.should_tx = false;
                                 continue;
                             }
                         }
@@ -326,11 +327,11 @@ const TOK_PER_BLOCK: usize = 5;
 
 impl Listener {
     pub fn new(
-        addr: SocketAddr,
+        addr: &SocketAddr,
         master_tx: Sender<DaemonRequest>,
         l_rcvr: Receiver<ListenerRq>,
     ) -> Result<Listener, Error> {
-        let listener = TcpListener::bind(&addr)?;
+        let listener = TcpListener::bind(addr)?;
 
         let poll = Poll::new()?;
 
@@ -397,13 +398,13 @@ impl Listener {
             }
             2 => loop {
                 match client.rx.try_recv() {
-                    Ok(x) => {
+                    Ok(pkt) => {
                         match &mut client.state {
                             ClientState::Waiting(atx) => {
                                 let atx = atx.clone();
                                 mem::replace(&mut client.state, ClientState::Assigned);
 
-                                match x {
+                                match pkt {
                                     ClientBkRq::Header(capacity, queues) => {
                                         self.master_tx.send(DaemonRequest::WorkerAdd(WorkerInfo(capacity, queues), atx)).map_err(|_| TcpClientErr::Rx(108))?;
                                     }
@@ -413,7 +414,7 @@ impl Listener {
                                 }
                             }
                             ClientState::Operating(wid, assigned_commands) => {
-                                match x {
+                                match pkt {
                                     ClientBkRq::Result(idx, wres) => {
                                         if assigned_commands.contains(idx) {
                                             let (a, b, c) = assigned_commands.remove(idx);
@@ -460,6 +461,7 @@ impl Listener {
                                 match pkt {
                                     DaemonWorker::JobAssigned(a, b, c, d) => {
                                         let idx = acmds.insert((a.clone(), b.clone(), c.clone()));
+
                                         client.tx.send(ClientBkRp::Request(idx, d)).map_err(|_| TcpClientErr::Tx(99))?;
                                     }
                                     _ => {
@@ -487,31 +489,38 @@ impl Listener {
     pub fn run(&mut self) -> Result<bool, Error> {
         // right now, the issue is that we need to pick one of the sequential communicators.
         let mut events = Events::with_capacity(1024);
-        loop {
-            self.poll.poll(&mut events, None)?;
 
-            for event in events.iter() {
+        loop {
+            let count = self.poll.poll(&mut events, None)?;
+
+            for (evi, event) in events.iter().enumerate() {
                 match event.token() {
                     Token(0) => {
                         loop {
-                            let (connected, address) = match self.listener.accept() {
+                            let (sock, address) = match self.listener.accept() {
                                 Ok(x) => x,
                                 Err(x) => match x.kind() {
-                                    io::ErrorKind::WouldBlock => continue,
+                                    io::ErrorKind::WouldBlock => break,
                                     _ => return Err(x)
                                 }
                             };
 
-                            let (rx, tx, fw) = StreamForwarder::<TcpStream, ClientBkRq, ClientBkRp, SerdeError>::new(connected)?;
+                            sock.set_nodelay(true)?;
+                            sock.set_keepalive(Some(Duration::from_secs(1)))?;
+
+                            let (rx, tx, fw) = StreamForwarder::<TcpStream, ClientBkRq, ClientBkRp, SerdeError>::new(sock)?;
 
                             let (atx, arx) = channel::<DaemonWorker>();
 
                             let client = TcpClient { address, state: ClientState::Waiting(atx), chan: fw, rx, tx, rrx: arx };
 
                             self.register(client).unwrap();
+
                             //spawn(move || err_sink(|| c.run()));
                             // todo how do we manage error conditions spawned in threads?
                             // todo somehow manage the error condition here, possibly needs to go upstream
+
+                            //self.master_tx.send(DaemonRequest::WorkerAdd())
                         }
                     }
                     Token(1) => {
@@ -528,12 +537,11 @@ impl Listener {
                         let event_idx = x % TOK_PER_BLOCK;
 
                         match self.process_client(client_idx, event_idx) {
-                            _ => {}
                             Err(x) => {
                                 let success = self.unregister(client_idx);
-                                dbg!(x);
-
+                                eprintln!("client unregistered {:?} {:?} {:?}", success, client_idx, x);
                             }
+                            _ => {}
                         }
                     }
                 }
@@ -569,19 +577,17 @@ pub struct TCPWorkerAdapter {
 impl TCPWorkerAdapter {
     /// Should own the WorkerForwarders (they will go away with it).
 
-    pub fn new(addr: &str, master_tx: Sender<DaemonRequest>) -> Result<Self, TCPWorkerAdapterError> {
-        let (l_sndr, l_rcvr) = channel::<ListenerRq>();
-
-        let addr: SocketAddr = addr.parse().map_err(|x| TCPWorkerAdapterError::Address(x))?;
+    pub fn new(addr: &SocketAddr, master_tx: Sender<DaemonRequest>) -> Result<Self, TCPWorkerAdapterError> {
+        let (meta_tx, meta_rx) = channel::<ListenerRq>();
 
         // todo who owns the workers created by the ListenerThread ?
 
-        let mut listener = Listener::new(addr, master_tx, l_rcvr)?;
+        let mut listener = Listener::new(addr, master_tx, meta_rx)?;
 
-        spawn(move || err_sink(|| listener.run()));
+        let x = spawn(move || err_sink(|| listener.run()));
 
         Ok(TCPWorkerAdapter {
-            listener: l_sndr.clone(),
+            listener: meta_tx.clone(),
         })
     }
 }

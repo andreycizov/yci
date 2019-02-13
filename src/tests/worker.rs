@@ -12,7 +12,7 @@ struct W1 {
     wid: Option<WorkerId>,
 }
 
-impl W1 {
+pub trait FirstExecutor {
     fn exec(&mut self, command: &XCmd) -> WorkerResult {
         let nip = || {
             let next_ip = command.args.last();
@@ -265,24 +265,11 @@ impl W1 {
         }
     }
 
-    fn run(&mut self) -> usize {
-        let mut i = 0;
-        while let Ok(x) = self.rx.try_recv() {
-            println!("{:?}", x);
-            match x {
-                DaemonWorker::WorkerCreated(wid) => {
-                    self.wid = Some(dbg!(wid));
-                }
-                DaemonWorker::JobAssigned(tid, sid, cid, cmd) => {
-                    let ret = self.exec(&cmd);
 
-                    self.rep.send(DaemonRequest::Finished(self.wid.clone().unwrap(), tid, sid, cid, ret));
-                    i += 1;
-                }
-            }
-        }
-        i
-    }
+}
+
+impl FirstExecutor for W1 {
+
 }
 
 impl Worker for W1 {
@@ -304,6 +291,29 @@ impl Worker for W1 {
 
     fn put(&mut self, command: &XCmd, result_cb: WorkerReplier) {
         result_cb.clone().reply(self.exec(command))
+    }
+
+
+}
+
+impl W1  {
+    fn run(&mut self) -> usize {
+        let mut i = 0;
+        while let Ok(x) = self.rx.try_recv() {
+            println!("{:?}", x);
+            match x {
+                DaemonWorker::WorkerCreated(wid) => {
+                    self.wid = Some(dbg!(wid));
+                }
+                DaemonWorker::JobAssigned(tid, sid, cid, cmd) => {
+                    let ret = self.exec(&cmd);
+
+                    self.rep.send(DaemonRequest::Finished(self.wid.clone().unwrap(), tid, sid, cid, ret));
+                    i += 1;
+                }
+            }
+        }
+        i
     }
 }
 
@@ -353,7 +363,6 @@ fn test_worker_a() {
 
     for i in 0..100 {
         DPU::process_assignments(
-            tx.clone(),
             &mut state,
             &mut assignment_queue,
             &mut workers,

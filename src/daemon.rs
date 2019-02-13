@@ -428,6 +428,7 @@ impl DPU {
         multi_queue: &mut MQ,
     ) {
         while let Ok(pkt) = receiver.try_recv() {
+
             match pkt {
                 DaemonRequest::Finished(wid, thread_id, step_id, queue_id, res) => {
                     let thread = state.threads.get_mut(&thread_id).unwrap();
@@ -446,6 +447,7 @@ impl DPU {
                     )
                 }
                 DaemonRequest::WorkerAdd(info, chan_rep) => {
+                    eprintln!("wadd");
                     let id = state.create_id();
 
                     DPU::worker_add(
@@ -474,7 +476,6 @@ impl DPU {
     }
 
     pub(crate) fn process_assignments(
-        sender: Sender<DaemonRequest>,
         state: &mut State,
         assignment_queue: &mut VecDeque<Ass>,
         workers: &mut WS,
